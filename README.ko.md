@@ -101,6 +101,22 @@ Claude Code에 프로젝트의 장기 기억을 더합니다: SessionStart 훅�
 바이너리를 호출할 뿐이라 &mdash; 완전히 오프라인입니다. 바이너리가 `PATH`에
 없으면 플러그인은 우아하게 비활성화되고 Claude는 회상 없이 그대로 동작합니다.
 
+### MCP 서버 (모든 에이전트)
+
+툴을 가로지르는 세션 히스토리를 MCP 클라이언트가 호출할 수 있는 도구로 노출합니다
+&mdash; `search_sessions`, `trace_file`, `get_session_brief`. 전부 읽기 전용이고
+100% 로컬(stdio, 소켓 없음)입니다.
+
+```console
+claude mcp add sessionwiki -- sessionwiki mcp
+```
+
+Cursor는 `~/.cursor/mcp.json`에 추가:
+
+```json
+{ "mcpServers": { "sessionwiki": { "command": "sessionwiki", "args": ["mcp"] } } }
+```
+
 ## 빠른 시작
 
 ```console

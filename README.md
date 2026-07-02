@@ -103,6 +103,22 @@ Now Claude pulls in prior work when you start a task, and `/sessionwiki:recall
 `sessionwiki` binary &mdash; fully offline. If the binary isn't on `PATH`, the
 plugin degrades gracefully and Claude just works without recall.
 
+### MCP server (any agent)
+
+Expose your cross-tool session history as tools any MCP client can call &mdash;
+`search_sessions`, `trace_file`, and `get_session_brief`, all read-only and 100%
+local (stdio, no sockets).
+
+```console
+claude mcp add sessionwiki -- sessionwiki mcp
+```
+
+For Cursor, add to `~/.cursor/mcp.json`:
+
+```json
+{ "mcpServers": { "sessionwiki": { "command": "sessionwiki", "args": ["mcp"] } } }
+```
+
 ## Quick start
 
 ```console

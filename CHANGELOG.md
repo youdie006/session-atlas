@@ -7,6 +7,11 @@ semantic versioning once it reaches 1.0.
 ## [Unreleased]
 
 ### Added
+- `sessionwiki mcp`: a stdio MCP server exposing three read-only tools
+  (`search_sessions`, `trace_file`, `get_session_brief`) to any MCP client
+  (Claude Code, Cursor, and others). Cross-tool session search as agent tools;
+  100% local, read-only, no sync. Register with
+  `claude mcp add sessionwiki -- sessionwiki mcp`.
 - Homebrew: `brew install youdie006/tap/sessionwiki` (macOS and Linux).
 
 ### Fixed
