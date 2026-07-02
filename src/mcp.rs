@@ -139,8 +139,98 @@ fn tools_list() -> Value {
     ]})
 }
 
-fn tool_call(_conn: &mut Option<Connection>, _params: &Value) -> Result<Value, (i64, String)> {
-    Err((-32602, "no tools yet".into()))
+/// Open the read-only index lazily on first use. On a machine with no index
+/// yet, `open_readonly` fails; the caller decides whether that is empty-success
+/// (search/trace) or an error (brief).
+fn get_conn(conn: &mut Option<Connection>) -> Option<&Connection> {
+    if conn.is_none() {
+        *conn = crate::index::open_readonly().ok();
+    }
+    conn.as_ref()
+}
+
+fn clamp_arg(v: &Value, key: &str, default: i64, lo: i64, hi: i64) -> i64 {
+    v.get(key)
+        .and_then(Value::as_i64)
+        .unwrap_or(default)
+        .clamp(lo, hi)
+}
+
+/// One text-content result, capped well under the client's ~25k-token limit,
+/// cut on a char boundary so multibyte text never panics or corrupts.
+fn text_result(text: String, is_error: bool) -> Value {
+    let capped: String = if text.chars().count() > 24_000 {
+        text.chars().take(24_000).collect::<String>() + "\n[truncated]"
+    } else {
+        text
+    };
+    json!({"content": [{"type": "text", "text": capped}], "isError": is_error})
+}
+
+fn tool_call(conn: &mut Option<Connection>, params: &Value) -> Result<Value, (i64, String)> {
+    let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+    match name {
+        "search_sessions" => Ok(tool_search(conn, &args)),
+        "trace_file" => Ok(tool_trace(conn, &args)),
+        "get_session_brief" => Ok(tool_brief(conn, &args)),
+        other => Err((-32602, format!("Unknown tool: {other}"))),
+    }
+}
+
+fn tool_search(conn: &mut Option<Connection>, args: &Value) -> Value {
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    // Min 3 NFC chars keeps every MCP search on the indexed FTS path; a shorter
+    // query would hit the 50k-row LIKE scan, a cheap DoS from an automated client.
+    if crate::util::nfc(query).chars().count() < 3 {
+        return text_result("query must be at least 3 characters".into(), true);
+    }
+    let limit = clamp_arg(args, "limit", 10, 1, 50) as usize;
+    let tool = args.get("tool").and_then(Value::as_str);
+    let project = args.get("project").and_then(Value::as_str);
+    let Some(conn) = get_conn(conn) else {
+        return text_result("[]".into(), false); // no index yet: empty, honest
+    };
+    let hits = match crate::index::search(conn, query, limit, tool, project) {
+        Ok(h) => h,
+        Err(e) => return text_result(format!("search failed: {e}"), true),
+    };
+    let rows: Vec<Value> = hits
+        .iter()
+        .map(|h| {
+            let mut v = serde_json::to_value(&h.row).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("snippet_marked");
+                if let Some(title) = obj.get("title").and_then(Value::as_str) {
+                    let n = crate::commands::neutralize_field(title);
+                    obj.insert("title".into(), json!(n));
+                }
+                let (plain, _marked) = crate::commands::clean_snippet(&h.snippet);
+                obj.insert(
+                    "snippet".into(),
+                    json!(crate::commands::neutralize_field(&plain)),
+                );
+                obj.insert("role".into(), json!(h.role));
+            }
+            v
+        })
+        .collect();
+    text_result(
+        serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into()),
+        false,
+    )
+}
+
+// Implemented in Task 5.
+fn tool_trace(_conn: &mut Option<Connection>, _args: &Value) -> Value {
+    text_result("[]".into(), false)
+}
+fn tool_brief(_conn: &mut Option<Connection>, _args: &Value) -> Value {
+    text_result("not implemented".into(), true)
 }
 
 /// The blocking stdio serve loop. Owns every byte written to stdout; EOF on
@@ -193,12 +283,110 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    use rusqlite::params;
+    use std::sync::Mutex;
+
+    // SESSIONWIKI_DATA is process-global; serialize the tests that set it.
+    static LOCK: Mutex<()> = Mutex::new(());
+
     fn call(line: &str) -> Option<Value> {
         let mut conn = None;
         handle_line(&mut conn, line).map(|s| {
             assert!(!s.contains('\n'), "reply must be single-line: {s}");
             serde_json::from_str(&s).unwrap()
         })
+    }
+
+    /// Seed an isolated index; keep the returned (read-write) connection alive so
+    /// its WAL/shm stays present for the read-only handle the tool path opens.
+    fn seed(dir: &str) -> Connection {
+        let path = std::env::temp_dir().join(dir);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        std::env::set_var("SESSIONWIKI_DATA", &path);
+        let conn = crate::index::open().unwrap();
+        conn.execute_batch(
+            "DELETE FROM files; DELETE FROM messages; DELETE FROM msgs; DELETE FROM touched;",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO files(path,mtime,size,session_id,tool,project,title,started,ended,msg_count,kind)
+             VALUES('/secret/home/me/.claude/x.jsonl',0,0,'s1','claude-code','/proj/api','fix auth bug',
+                    '2026-06-10T10:00:00+00:00','2026-06-10T10:00:00+00:00',1,'main')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO messages(session_id,role,text) VALUES('s1','user','preflight to /auth/login returns 403')",
+            [],
+        ).unwrap();
+        let mid: i64 = conn
+            .query_row("SELECT id FROM messages WHERE session_id='s1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO msgs(rowid,text) VALUES(?1,'preflight to /auth/login returns 403')",
+            params![mid],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO touched(session_id,path) VALUES('s1','/proj/api/src/auth.rs')",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    /// Drive one tools/call through a fresh (read-only, lazily-opened) handle.
+    fn tool(name: &str, args: Value) -> (Value, String) {
+        let mut conn = None;
+        let req = json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":name,"arguments":args}});
+        let v: Value =
+            serde_json::from_str(&handle_line(&mut conn, &req.to_string()).unwrap()).unwrap();
+        let text = v["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        (v, text)
+    }
+
+    #[test]
+    fn search_finds_session_hides_path_and_shape() {
+        let _lock = LOCK.lock().unwrap();
+        let _c = seed("sessionwiki-test-mcp-search");
+        let (v, text) = tool("search_sessions", json!({"query": "preflight"}));
+        assert!(v["result"]["isError"] != true, "not an error: {v}");
+        let arr: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(arr[0]["id"], "s1");
+        assert_eq!(arr[0]["tool"], "claude-code");
+        assert!(arr[0].get("path").is_none(), "no absolute path");
+        assert!(arr[0].get("snippet_marked").is_none(), "marked dropped");
+        assert!(!text.contains("/home/me"), "no home-dir leak: {text}");
+    }
+
+    #[test]
+    fn search_under_3_chars_is_iserror() {
+        let _lock = LOCK.lock().unwrap();
+        let _c = seed("sessionwiki-test-mcp-short");
+        let (v, _t) = tool("search_sessions", json!({"query": "au"}));
+        assert_eq!(v["result"]["isError"], true);
+    }
+
+    #[test]
+    fn empty_search_returns_empty_array_text_not_error() {
+        let _lock = LOCK.lock().unwrap();
+        let _c = seed("sessionwiki-test-mcp-empty");
+        let (v, text) = tool("search_sessions", json!({"query": "zzzznotfound"}));
+        assert!(v["result"]["isError"] != true);
+        assert_eq!(text, "[]");
+    }
+
+    #[test]
+    fn unknown_tool_is_minus_32602() {
+        let mut conn = None;
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#;
+        let v: Value = serde_json::from_str(&handle_line(&mut conn, req).unwrap()).unwrap();
+        assert_eq!(v["error"]["code"], -32602);
     }
 
     #[test]
