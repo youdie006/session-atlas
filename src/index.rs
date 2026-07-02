@@ -1350,12 +1350,19 @@ pub fn sessions_for_file(
     limit: usize,
 ) -> Result<Vec<(SessionRow, String)>> {
     let q = crate::util::nfc(query.trim().trim_start_matches("./"));
-    let suffix = format!("%/{q}");
+    // Escape LIKE metacharacters: the query is a caller-supplied path (the MCP
+    // trace_file arg included), so a bare `%` must match a literal `%`, not act
+    // as a wildcard that enumerates the whole index.
+    let esc = q
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let suffix = format!("%/{esc}");
     let mut stmt = conn.prepare(&format!(
         "SELECT f.session_id, f.tool, f.path, f.project, f.title, f.started, f.msg_count, f.kind,
                 {SUMMARY_SQL}, {TAGS_SQL}, t.path, (f.archived_at IS NOT NULL)
          FROM touched t JOIN files f ON f.session_id = t.session_id
-         WHERE t.path = ?1 OR t.path LIKE ?2
+         WHERE t.path = ?1 OR t.path LIKE ?2 ESCAPE '\\'
          GROUP BY f.session_id
          ORDER BY f.started DESC LIMIT ?3"
     ))?;
