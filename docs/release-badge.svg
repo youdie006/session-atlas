@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="110" height="20" role="img" aria-label="release: v0.16.1">
-  <title>release: v0.16.1</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="110" height="20" role="img" aria-label="release: v0.17.0">
+  <title>release: v0.17.0</title>
   <linearGradient id="s" x2="0" y2="100%">
     <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
     <stop offset="1" stop-opacity=".1"/>
@@ -13,7 +13,7 @@
   <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="110">
     <text aria-hidden="true" x="265" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="430">release</text>
     <text x="265" y="140" transform="scale(.1)" textLength="430">release</text>
-    <text aria-hidden="true" x="815" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="470">v0.16.1</text>
-    <text x="815" y="140" transform="scale(.1)" textLength="470">v0.16.1</text>
+    <text aria-hidden="true" x="815" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="470">v0.17.0</text>
+    <text x="815" y="140" transform="scale(.1)" textLength="470">v0.17.0</text>
   </g>
 </svg>

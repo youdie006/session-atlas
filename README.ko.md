@@ -7,7 +7,7 @@
 
 <a href="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml"><img src="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT 라이선스"></a>
-<a href="https://github.com/youdie006/sessionwiki/releases"><img src="docs/release-badge.png" height="20" alt="최신 릴리스 v0.16.1"></a>
+<a href="https://github.com/youdie006/sessionwiki/releases"><img src="docs/release-badge.png" height="20" alt="최신 릴리스 v0.17.0"></a>
 
 <a href="README.md">English</a> &middot; <b>한국어</b>
 

@@ -6,6 +6,8 @@ semantic versioning once it reaches 1.0.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-03
+
 ### Added
 - `sessionwiki mcp`: a stdio MCP server exposing three read-only tools
   (`search_sessions`, `trace_file`, `get_session_brief`) to any MCP client
@@ -13,6 +15,12 @@ semantic versioning once it reaches 1.0.
   100% local, read-only, no sync. Register with
   `claude mcp add sessionwiki -- sessionwiki mcp`.
 - Homebrew: `brew install youdie006/tap/sessionwiki` (macOS and Linux).
+
+### Changed
+- aider re-indexing is now linear instead of O(runs^2): a long
+  `.aider.chat.history.md` is split once per sync and cached, so a file with
+  thousands of runs re-indexes in a fraction of the time (measured 1600 runs:
+  ~11s to ~0.2s).
 
 ### Fixed
 - A partial directory walk (an unreadable project directory) can no longer
