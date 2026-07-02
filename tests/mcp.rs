@@ -27,7 +27,9 @@ bug','2026-06-10T10:00:00+00:00','2026-06-10T10:00:00+00:00',1,'main')",
         [],
     ).unwrap();
     let mid: i64 = conn
-        .query_row("SELECT id FROM messages WHERE session_id='s1'", [], |r| r.get(0))
+        .query_row("SELECT id FROM messages WHERE session_id='s1'", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     conn.execute(
         "INSERT INTO msgs(rowid,text) VALUES(?1,'preflight to /auth/login 403')",
@@ -35,7 +37,8 @@ bug','2026-06-10T10:00:00+00:00','2026-06-10T10:00:00+00:00',1,'main')",
     )
     .unwrap();
     // Flush WAL into the main db so the child's read-only handle reads cleanly.
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
 }
 
 #[test]
@@ -77,14 +80,24 @@ fn golden_handshake_search_and_stream_purity() {
         .filter(|l| !l.trim().is_empty())
         .map(|l| serde_json::from_str(l).expect("every stdout line is valid JSON"))
         .collect();
-    assert_eq!(lines.len(), 3, "one reply per request, none for the notification");
+    assert_eq!(
+        lines.len(),
+        3,
+        "one reply per request, none for the notification"
+    );
     assert_eq!(lines[0]["id"], 1);
     assert_eq!(lines[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(lines[1]["id"], "two");
     assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 3);
     assert_eq!(lines[2]["id"], 3);
     let text = lines[2]["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("s1"), "search found the seeded session: {text}");
+    assert!(
+        text.contains("s1"),
+        "search found the seeded session: {text}"
+    );
     assert!(!text.contains("/home/me"), "no home-dir leak");
-    assert!(!text.contains('\u{1b}'), "ESC in the seeded title is stripped");
+    assert!(
+        !text.contains('\u{1b}'),
+        "ESC in the seeded title is stripped"
+    );
 }
