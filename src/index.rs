@@ -218,6 +218,19 @@ mod migration_tests {
     }
 }
 
+/// A read-only handle for serving processes (the MCP server): it can never
+/// create the schema, migrate, VACUUM, or write durable data. Fails if no
+/// index exists yet (unlike `open`, which creates one).
+pub fn open_readonly() -> Result<Connection> {
+    use rusqlite::OpenFlags;
+    let conn = Connection::open_with_flags(
+        db_path()?,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+    Ok(conn)
+}
+
 pub fn open() -> Result<Connection> {
     let conn = Connection::open(db_path()?)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
