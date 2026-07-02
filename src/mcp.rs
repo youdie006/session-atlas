@@ -91,10 +91,54 @@ fn initialize_result(params: &Value) -> Value {
     })
 }
 
-// Filled in by later tasks; keeps the module compiling.
 fn tools_list() -> Value {
-    json!({"tools": []})
+    json!({"tools": [
+        {
+            "name": "search_sessions",
+            "title": "Search AI coding sessions",
+            "description": "Full-text search across every indexed AI coding session (Claude Code, Codex, Gemini, aider, and more). Returns matching sessions with a snippet. Read-only, local.",
+            "annotations": {"readOnlyHint": true},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search text, minimum 3 characters."},
+                    "tool": {"type": "string", "description": "Restrict to one tool, e.g. codex."},
+                    "project": {"type": "string", "description": "Restrict to a project (substring match)."},
+                    "limit": {"type": "integer", "description": "Max results, 1-50 (default 10)."}
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "trace_file",
+            "title": "Trace a file to the sessions that touched it",
+            "description": "List the AI coding sessions that edited or created a given file, across every tool. Read-only, local.",
+            "annotations": {"readOnlyHint": true},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "A file path; the repo-relative tail is matched, e.g. src/auth.rs."}
+                },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "get_session_brief",
+            "title": "Get a bounded briefing of one session",
+            "description": "Return a markdown briefing (head and tail) of one session by its short id from search or trace results. Read-only, local.",
+            "annotations": {"readOnlyHint": true},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "The short session id from search_sessions or trace_file."},
+                    "max_chars": {"type": "integer", "description": "Max briefing length, 1-20000 (default 4000)."}
+                },
+                "required": ["id"]
+            }
+        }
+    ]})
 }
+
 fn tool_call(_conn: &mut Option<Connection>, _params: &Value) -> Result<Value, (i64, String)> {
     Err((-32602, "no tools yet".into()))
 }
@@ -198,6 +242,22 @@ mod tests {
         let v = call("{not json").unwrap();
         assert_eq!(v["error"]["code"], -32700);
         assert!(v["id"].is_null());
+    }
+
+    #[test]
+    fn tools_list_has_three_readonly_tools() {
+        let v = call(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).unwrap();
+        let tools = v["result"]["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            ["search_sessions", "trace_file", "get_session_brief"]
+        );
+        for t in tools {
+            assert_eq!(t["annotations"]["readOnlyHint"], true);
+            assert_eq!(t["inputSchema"]["type"], "object");
+        }
+        assert!(v["result"].get("nextCursor").is_none());
     }
 
     #[test]
