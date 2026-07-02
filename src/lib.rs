@@ -11,6 +11,7 @@ pub mod blame;
 pub mod commands;
 pub mod hook;
 pub mod index;
+pub mod mcp;
 pub mod migrate;
 pub mod model;
 pub mod resume;

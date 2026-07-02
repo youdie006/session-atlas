@@ -271,6 +271,8 @@ enum Command {
         #[command(subcommand)]
         cmd: HookCmd,
     },
+    /// Run as an MCP server over stdio (register: claude mcp add sessionwiki -- sessionwiki mcp)
+    Mcp,
 }
 
 #[derive(Subcommand)]
@@ -397,6 +399,10 @@ fn main() {
         } => {
             // Always exit 0 with whatever was printed; never the exit(1) path.
             sessionwiki::hook::session_start();
+            return;
+        }
+        Command::Mcp => {
+            sessionwiki::mcp::serve();
             return;
         }
     };

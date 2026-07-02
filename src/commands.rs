@@ -59,7 +59,9 @@ pub(crate) fn neutralize_field(s: &str) -> String {
         let c = match c {
             '\n' | '\t' | '\r' => ' ',
             '<' | '>' | '`' => continue,
-            c if (c as u32) < 0x20 || c == '\u{7f}' || ('\u{80}'..='\u{9f}').contains(&c) => continue,
+            c if (c as u32) < 0x20 || c == '\u{7f}' || ('\u{80}'..='\u{9f}').contains(&c) => {
+                continue
+            }
             c => c,
         };
         if c == ' ' {
