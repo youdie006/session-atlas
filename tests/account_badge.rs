@@ -103,3 +103,34 @@ fn no_timeline_means_null_accounts() {
     assert_eq!(rows[0].account, None);
     std::env::remove_var("SESSIONWIKI_SWAPDEX_TIMELINE");
 }
+
+#[test]
+fn trace_and_related_rows_carry_accounts_too() {
+    let _g = LOCK.lock().unwrap();
+    let conn = fresh("trace");
+    let tl = std::env::temp_dir().join("sessionwiki-test-acct-trace-tl.jsonl");
+    std::fs::write(
+        &tl,
+        "{\"ts\":1000,\"tool\":\"codex\",\"account\":\"work\",\"action\":\"use\"}\n",
+    )
+    .unwrap();
+    std::env::set_var("SESSIONWIKI_SWAPDEX_TIMELINE", &tl);
+    let t = chrono::DateTime::from_timestamp(1500, 0)
+        .unwrap()
+        .to_rfc3339();
+    seed(&conn, "s-t", "codex", &t);
+    // touched: file -> session join used by trace
+    conn.execute(
+        "INSERT INTO touched(session_id, path) VALUES ('s-t','src/main.rs')",
+        [],
+    )
+    .unwrap();
+    let rows = index::sessions_for_file(&conn, "src/main.rs", 10).unwrap();
+    assert!(!rows.is_empty(), "trace found the session");
+    assert_eq!(
+        rows[0].0.account.as_deref(),
+        Some("work"),
+        "trace rows must be annotated like list rows"
+    );
+    std::env::remove_var("SESSIONWIKI_SWAPDEX_TIMELINE");
+}

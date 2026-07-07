@@ -270,7 +270,7 @@ pub fn search(
             ""
         };
         println!(
-            "{} {} {} {} {} {}",
+            "{} {} {} {} {}{}",
             yellow(&h.row.session_id),
             cyan(&h.row.tool),
             dim(&fmt_date(when)),
@@ -279,7 +279,7 @@ pub fn search(
             h.row
                 .account
                 .as_deref()
-                .map(|a| dim(&format!("@{a}")))
+                .map(|a| format!(" {}", dim(&format!("@{a}"))))
                 .unwrap_or_default(),
         );
         // snippet() wraps matches in \x02 .. \x03; swap for ANSI here. Strip

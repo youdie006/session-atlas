@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.18.1] - 2026-07-07
+
+### Fixed
+- `trace` and `related` rows now carry the swapdex `account` field like
+  `list`/`search` do (the annotate call was missing on those two query paths,
+  so the same session showed a badge in search but never in a file trace -
+  across CLI, web, and MCP).
+
+### Changed
+- Timeline reads are capped to the newest 4000 lines (defense in depth;
+  swapdex itself bounds the file to ~1000 events), and account names are
+  control-char-stripped at the source so every consumer gets a terminal-safe
+  badge. `search` no longer prints a trailing space on badge-less lines.
+- The web UI shows the account badge in each session's meta line.
+
 ## [0.18.0] - 2026-07-07
 
 ### Added

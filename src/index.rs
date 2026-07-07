@@ -1404,7 +1404,9 @@ pub fn sessions_for_file(
             r.get::<_, String>(10)?,
         ))
     })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut out = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    crate::account_link::annotate(out.iter_mut().map(|(r, _)| r));
+    Ok(out)
 }
 
 /// Like `sessions_for_file` but returns the start/end epoch window and project
@@ -1616,6 +1618,7 @@ pub fn related(conn: &Connection, session_id: &str, limit: usize) -> Result<Vec<
     }
 
     out.truncate(limit);
+    crate::account_link::annotate(out.iter_mut());
     Ok(out)
 }
 

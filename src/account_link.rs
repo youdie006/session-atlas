@@ -35,7 +35,12 @@ pub fn load_events() -> Vec<SwitchEvent> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for line in text.lines() {
+    // Defense against a producer-contract change or a hand-edited file:
+    // swapdex bounds the timeline to ~1000 events, but cap our read anyway
+    // (newest entries are at the tail, which is the part attribution needs).
+    let lines: Vec<&str> = text.lines().collect();
+    let tail = lines.len().saturating_sub(4000);
+    for line in &lines[tail..] {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
@@ -48,7 +53,9 @@ pub fn load_events() -> Vec<SwitchEvent> {
             out.push(SwitchEvent {
                 ts,
                 tool: tool.to_string(),
-                account: account.to_string(),
+                // Strip control chars at the source: every consumer (CLI
+                // badge, web, JSON) then gets a terminal-safe name.
+                account: account.chars().filter(|c| !c.is_control()).collect(),
             });
         }
     }

@@ -778,7 +778,8 @@ function renderItems(rows, isSearch) {
     const meta = el("div", "meta");
     meta.appendChild(el("span", "dot " + r.tool));
     const sub = r.kind === "sub" ? ` · ${L.subagent}` : "";
-    meta.appendChild(el("span", "", `${r.tool} · ${fmtDate(r.started)} · ${L.msgs(r.msgs)}${sub}`));
+    const acct = r.account ? ` · @${r.account}` : ""; // swapdex account badge
+    meta.appendChild(el("span", "", `${r.tool} · ${fmtDate(r.started)} · ${L.msgs(r.msgs)}${sub}${acct}`));
     item.appendChild(meta);
     if (isSearch && r.snippet) {
       const snip = el("div", "snip");
