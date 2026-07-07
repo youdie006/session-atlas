@@ -311,6 +311,7 @@ one feature that touches an LLM is `summarize`, and it does so by running a CLI
 | gajae-code (& Pi) | `~/.gjc/agent/sessions/**/*.jsonl` | supported |
 | Continue | `~/.continue/sessions/*.json` | supported |
 | gptme | `~/.local/share/gptme/logs/<session>/conversation.jsonl` | supported |
+| prodex (ChatGPT Pro consults) | per-repo `.bridge/tasks|results` via the `~/.local/share/prodex/bridges.json` registry (prodex >=0.11.0); `resume` opens the ChatGPT thread | supported |
 | aider | per-repo `.aider.chat.history.md` (markdown) | supported |
 | Cursor, Zed, ... | | planned &mdash; PRs welcome |
 

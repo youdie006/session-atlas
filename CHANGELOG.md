@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.19.0] - 2026-07-07
+
+### Added
+- prodex adapter: every ChatGPT Pro consult made through
+  [prodex](https://github.com/youdie006/prodex) becomes a searchable session -
+  the bridge task is the question, the result/answer artifact is the answer,
+  and files bundled with a task become `trace` provenance links. Discovery
+  reads the machine-wide bridge registry prodex >=0.11.0 maintains
+  (`~/.local/share/prodex/bridges.json`); registered repos that no longer
+  exist are skipped silently. `resume` on a prodex session prints the ChatGPT
+  thread URL it ran in (only an `https://chatgpt.com/` URL is ever surfaced).
+- Session ids for prodex are the same short stable 12-hex shape as every
+  other tool (task ids share a long date prefix that would defeat prefix
+  addressing).
+
+### Changed
+- `list`/`search` truncate the ID column display at 13 chars so an unusually
+  long id cannot shear the table (ids are prefix-addressable).
+
 ## [0.18.1] - 2026-07-07
 
 ### Fixed

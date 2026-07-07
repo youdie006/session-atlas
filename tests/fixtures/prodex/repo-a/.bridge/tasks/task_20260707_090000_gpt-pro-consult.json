@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "task_20260707_090000_gpt-pro-consult",
+  "source": "codex",
+  "status": "done",
+  "title": "GPT Pro consult",
+  "prompt": "Should the retry loop use exponential backoff with jitter, or a fixed interval?",
+  "repo_id": "default",
+  "files": [],
+  "provenance": { "adapter": "cli", "warnings": [] },
+  "claimed_by": "codex",
+  "claimed_at": "2026-07-07T09:00:10.000Z",
+  "result_path": ".bridge/results/task_20260707_090000_gpt-pro-consult.json"
+}

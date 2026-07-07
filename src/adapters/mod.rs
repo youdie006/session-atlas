@@ -8,6 +8,8 @@ mod gemini;
 mod gptme;
 pub mod harness;
 mod opencode;
+mod prodex;
+pub use prodex::thread_url_for_task as prodex_thread_url;
 
 use crate::model::{Session, StoreReport};
 use anyhow::Result;
@@ -107,6 +109,7 @@ pub fn all() -> Vec<Box<dyn Adapter>> {
         Box::new(continue_dev::Continue),
         Box::new(gptme::Gptme),
         Box::new(aider::Aider::default()),
+        Box::new(prodex::Prodex),
     ]
 }
 

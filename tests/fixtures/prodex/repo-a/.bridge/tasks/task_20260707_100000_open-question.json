@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "task_20260707_100000_open-question",
+  "source": "codex",
+  "status": "pending",
+  "title": "Open question",
+  "prompt": "What is the cleanest way to bound the queue?",
+  "repo_id": "default",
+  "files": [],
+  "provenance": { "adapter": "cli", "warnings": [] }
+}

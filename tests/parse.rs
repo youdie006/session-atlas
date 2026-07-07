@@ -405,3 +405,61 @@ fn every_adapter_is_addressable_by_name() {
     }
     assert!(adapters::by_name("nonexistent").is_none());
 }
+
+#[test]
+fn prodex_consult_task_becomes_a_two_message_session() {
+    let s = parse(
+        "prodex",
+        "prodex/repo-a/.bridge/tasks/task_20260707_090000_gpt-pro-consult.json",
+    );
+    assert_eq!(s.tool, "prodex");
+    // sha256("task_20260707_090000_gpt-pro-consult")[..12] - the uniform
+    // short-id shape every tool gets in the index.
+    assert_eq!(s.id, "567f374d7a70");
+    assert_eq!(s.title, "GPT Pro consult");
+    assert_eq!(roles(&s), ["user", "assistant"]);
+    assert!(s.messages[0].text.contains("exponential backoff"), "prompt");
+    // The full pro-consult artifact wins over the truncated summary.
+    assert!(
+        s.messages[1].text.contains("thundering herds"),
+        "artifact text used as the answer: {}",
+        s.messages[1].text
+    );
+    assert!(s.started.is_some(), "claimed_at parsed");
+    // Project = the repo that owns the .bridge.
+    assert!(s.project.ends_with("repo-a"), "{}", s.project);
+}
+
+#[test]
+fn prodex_pending_task_is_a_one_message_session() {
+    let s = parse(
+        "prodex",
+        "prodex/repo-a/.bridge/tasks/task_20260707_100000_open-question.json",
+    );
+    assert_eq!(roles(&s), ["user"]);
+    assert!(s.started.is_some(), "falls back to the id timestamp");
+}
+
+#[test]
+fn prodex_thread_url_comes_from_the_bridge_session() {
+    let task = fixture("prodex/repo-a/.bridge/tasks/task_20260707_090000_gpt-pro-consult.json");
+    let url = sessionwiki::adapters::prodex_thread_url(&task);
+    assert_eq!(
+        url.as_deref(),
+        Some("https://chatgpt.com/c/aaaa1111-2222-3333-4444-555566667777")
+    );
+    // A non-chatgpt URL in a tampered file is never surfaced.
+    let dir = tempfile::tempdir().unwrap();
+    let tasks = dir.path().join(".bridge/tasks");
+    let sessions = dir.path().join(".bridge/sessions");
+    std::fs::create_dir_all(&tasks).unwrap();
+    std::fs::create_dir_all(&sessions).unwrap();
+    let t = tasks.join("task_x.json");
+    std::fs::write(&t, "{}").unwrap();
+    std::fs::write(
+        sessions.join("s.json"),
+        r#"{"thread":"file:///etc/passwd"}"#,
+    )
+    .unwrap();
+    assert_eq!(sessionwiki::adapters::prodex_thread_url(&t), None);
+}

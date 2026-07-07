@@ -198,7 +198,7 @@ pub fn list(
         };
         println!(
             "{:<13} {:<12} {:<10} {:>5}  {:<24} {}{}{}{}{}",
-            yellow(&r.session_id),
+            yellow(&truncate(&r.session_id, 13)),
             cyan(&r.tool),
             rel_time(when),
             r.msg_count,
@@ -271,7 +271,7 @@ pub fn search(
         };
         println!(
             "{} {} {} {} {}{}",
-            yellow(&h.row.session_id),
+            yellow(&truncate(&h.row.session_id, 13)),
             cyan(&h.row.tool),
             dim(&fmt_date(when)),
             truncate(&project_label(&h.row.project), 28),
@@ -391,7 +391,7 @@ pub fn recall(
         };
         println!(
             "  {} {} {} {}{}",
-            yellow(&h.row.session_id),
+            yellow(&truncate(&h.row.session_id, 13)),
             cyan(&h.row.tool),
             dim(&fmt_date(when)),
             truncate(&h.row.title, 50),
@@ -783,6 +783,19 @@ pub fn resume_cmd(id: &str, print_only: bool, no_sync: bool) -> Result<()> {
     // Tool support first: for tools without headless resume (aider, OpenCode,
     // Gemini...), the stored path may be a shared-store key rather than a real
     // file, so an exists() check first would misreport it as a deleted file.
+    // prodex consults live in a shared ChatGPT thread; "resume" = open it.
+    if row.tool == "prodex" {
+        if let Some(url) = crate::adapters::prodex_thread_url(path) {
+            println!("This consult ran in your ChatGPT Pro thread. Open it to continue:");
+            println!("  {url}");
+            println!("(or send a follow-up from the terminal: `prodex ask \"...\"`)");
+            return Ok(());
+        }
+        bail!(
+            "this prodex bridge has no recorded ChatGPT thread yet - `prodex ask` starts
+             one. You can still carry the context over: sessionwiki brief {id}"
+        );
+    }
     let Some(info) = resume::for_session(&row.tool, path, &row.project) else {
         bail!(
             "{} sessions cannot be resumed headlessly. For Gemini CLI, open `gemini` in\n\

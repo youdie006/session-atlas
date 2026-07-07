@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "task_id": "task_20260707_090000_gpt-pro-consult",
+  "status": "done",
+  "summary": "Use exponential backoff with full jitter; fixed intervals synchronize retries.",
+  "artifacts": [],
+  "commands": [],
+  "warnings": [],
+  "created_at": "2026-07-07T09:03:00.000Z"
+}
