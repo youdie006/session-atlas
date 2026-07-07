@@ -155,10 +155,18 @@ pub fn list(
     if !no_sync {
         index::sync(&mut conn, tool)?;
     }
-    let mut rows = index::recent(&conn, limit, tool, project, tag, all)?;
+    // The @badge filter is computed post-query (annotation happens inside the
+    // query fns), so over-fetch and truncate - filtering the newest `limit`
+    // rows would silently return fewer matches than asked for.
+    let fetch = if account.is_some() {
+        limit.saturating_mul(50).clamp(limit, 50_000)
+    } else {
+        limit
+    };
+    let mut rows = index::recent(&conn, fetch, tool, project, tag, all)?;
     if let Some(a) = account {
-        // The @badge as a filter (annotation happens inside the query fns).
         rows.retain(|r| r.account.as_deref() == Some(a));
+        rows.truncate(limit);
     }
     if json {
         println!("{}", serde_json::to_string(&rows)?);
@@ -247,6 +255,7 @@ pub fn search(
     };
     if let Some(a) = account {
         hits.retain(|h| h.row.account.as_deref() == Some(a));
+        // (search relevance already ordered; post-filter keeps the top matches)
     }
     if json {
         let out: Vec<serde_json::Value> = hits

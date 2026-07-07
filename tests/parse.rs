@@ -481,3 +481,25 @@ fn prodex_artifact_without_result_is_still_the_answer() {
         s.messages[1].text
     );
 }
+
+// AUDIT-HIGH: a crafted/corrupt task id with a multibyte char at a slice
+// boundary must not panic (an uncaught parse panic aborts the WHOLE indexer -
+// one bad .bridge file would brick every list/search/scan).
+#[test]
+fn prodex_multibyte_task_id_never_panics() {
+    let dir = tempfile::tempdir().unwrap();
+    let tasks = dir.path().join(".bridge/tasks");
+    std::fs::create_dir_all(&tasks).unwrap();
+    let p = tasks.join("bad.json");
+    std::fs::write(
+        &p,
+        r#"{"id":"task_12345é7_123456","title":"t","prompt":"p"}"#,
+    )
+    .unwrap();
+    let adapter = sessionwiki::adapters::by_name("prodex").unwrap();
+    let s = adapter.parse(&p).expect("parse must not panic");
+    assert!(
+        s.started.is_none(),
+        "unparseable stamp -> None, not a crash"
+    );
+}

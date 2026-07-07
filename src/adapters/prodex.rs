@@ -66,7 +66,15 @@ fn ts_from_id(id: &str) -> Option<DateTime<Utc>> {
         return None;
     }
     let (d, t) = (parts.next()?, parts.next()?);
-    if d.len() != 8 || t.len() != 6 {
+    // ASCII-digit gate BEFORE any byte slicing: ids are ASCII by construction,
+    // but this parses untrusted on-disk data - a multibyte char at a slice
+    // boundary must degrade to None, never panic (a parse panic would abort
+    // the whole indexer).
+    if d.len() != 8
+        || t.len() != 6
+        || !d.bytes().all(|b| b.is_ascii_digit())
+        || !t.bytes().all(|b| b.is_ascii_digit())
+    {
         return None;
     }
     let iso = format!(

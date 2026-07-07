@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.19.2] - 2026-07-07
+
+### Fixed
+- A crafted/corrupt prodex task id with a multibyte character at a slice
+  boundary could panic the parser - and a parse panic aborts the WHOLE
+  indexer, so one bad `.bridge` file bricked every `list`/`search`/`scan`.
+  The id timestamp parse now gates on ASCII digits before slicing (found by
+  an adversarial audit; same bug class swapdex fixed a release earlier).
+- `list --account` no longer silently returns fewer rows than `-n`: the
+  badge filter is computed post-query, so the query now over-fetches and
+  truncates after filtering.
+
 ## [0.19.1] - 2026-07-07
 
 Ecosystem-walkthrough fixes, from a fresh user's chair.
