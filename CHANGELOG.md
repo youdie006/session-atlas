@@ -4,7 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
-## [Unreleased]
+## [0.18.0] - 2026-07-07
+
+### Added
+- swapdex integration: `list` and `search` badge each session with the
+  account profile active when it ran (`@work`), and `--json` rows carry an
+  `account` field (null when unknown). Attribution reads swapdex's switch
+  timeline read-only and never guesses - sessions that predate the first
+  recorded switch stay unbadged. No swapdex on the machine, no change.
+  The MCP server neutralizes the new field like every other free-text one.
 
 ## [0.17.0] - 2026-07-03
 

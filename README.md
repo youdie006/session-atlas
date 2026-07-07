@@ -244,6 +244,17 @@ file to still exist. `brief` works even across tools. `summarize` runs your
 LLM, on your machine, at your command &mdash; sessionwiki itself never makes a
 network call.
 
+### Which account was that? (swapdex)
+
+If [swapdex](https://github.com/youdie006/swapdex) manages your Claude/Codex
+accounts, `list` and `search` badge every session with the account profile
+that was active when it ran (`@work`, `@personal`), and `--json` carries an
+`account` field. Attribution joins swapdex's switch timeline (read-only)
+with each session's start time; sessions that predate your first switch stay
+unbadged &mdash; a missing badge, never a guess. The other direction works
+too: after switching in `swapdex ui`, it lists this machine's recent sessions
+and hands off to `sessionwiki resume`.
+
 ## How it works
 
 ```mermaid

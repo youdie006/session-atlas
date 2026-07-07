@@ -180,6 +180,12 @@ pub fn list(
             .as_deref()
             .map(|t| format!("  {}", dim(&format!("#{}", t.replace(',', " #")))))
             .unwrap_or_default();
+        // swapdex account badge (absent when no switch timeline exists).
+        let account = r
+            .account
+            .as_deref()
+            .map(|a| format!("  {}", dim(&format!("@{a}"))))
+            .unwrap_or_default();
         let archived = if r.archived {
             format!("  {}", dim("[archived]"))
         } else {
@@ -191,13 +197,14 @@ pub fn list(
             String::new()
         };
         println!(
-            "{:<13} {:<12} {:<10} {:>5}  {:<24} {}{}{}{}",
+            "{:<13} {:<12} {:<10} {:>5}  {:<24} {}{}{}{}{}",
             yellow(&r.session_id),
             cyan(&r.tool),
             rel_time(when),
             r.msg_count,
             truncate(&project_label(&r.project), 24),
             truncate(&r.title, 60),
+            account,
             tags,
             archived,
             sub,
@@ -263,12 +270,17 @@ pub fn search(
             ""
         };
         println!(
-            "{} {} {} {} {}",
+            "{} {} {} {} {} {}",
             yellow(&h.row.session_id),
             cyan(&h.row.tool),
             dim(&fmt_date(when)),
             truncate(&project_label(&h.row.project), 28),
             dim(&format!("[{}]{marker}", h.role)),
+            h.row
+                .account
+                .as_deref()
+                .map(|a| dim(&format!("@{a}")))
+                .unwrap_or_default(),
         );
         // snippet() wraps matches in \x02 .. \x03; swap for ANSI here. Strip
         // other control bytes first (the message body is untrusted input).

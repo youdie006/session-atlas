@@ -79,8 +79,8 @@ fn session_row_json_has_pinned_fields() {
     assert_eq!(
         keys,
         [
-            "archived", "id", "kind", "msgs", "preview", "project", "started", "summary", "tags",
-            "title", "tool"
+            "account", "archived", "id", "kind", "msgs", "preview", "project", "started",
+            "summary", "tags", "title", "tool"
         ]
     );
     assert!(

@@ -227,14 +227,14 @@ fn safe_project(p: &str) -> String {
 }
 
 /// Neutralize every untrusted free-text field of a serialized SessionRow before
-/// it reaches a consuming agent: title/preview/summary and each tag get the
+/// it reaches a consuming agent: title/preview/summary/account and each tag get the
 /// fence/tag/control neutralizer; project additionally gets home-dir redaction.
 /// Structured fields (id, tool, kind, started, msgs, archived) are left as is.
 fn neutralize_row(v: &mut Value) {
     let Some(obj) = v.as_object_mut() else {
         return;
     };
-    for key in ["title", "preview", "summary"] {
+    for key in ["title", "preview", "summary", "account"] {
         if let Some(s) = obj.get(key).and_then(Value::as_str) {
             let n = crate::commands::neutralize_field(s);
             obj.insert(key.into(), json!(n));

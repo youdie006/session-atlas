@@ -879,6 +879,10 @@ pub struct SessionRow {
     pub tags: Option<String>,
     /// True if the tool deleted the original and we kept the indexed copy.
     pub archived: bool,
+    /// The swapdex account profile active when this session started, when a
+    /// swapdex switch timeline exists on the machine. Null otherwise - a
+    /// missing badge, never a guess.
+    pub account: Option<String>,
 }
 
 /// Tags are stored comma-joined but the JSON contract is an array (matching the
@@ -951,9 +955,12 @@ pub fn recent(
             summary: r.get(9)?,
             tags: r.get(10)?,
             archived: r.get(11)?,
+            account: None,
         })
     })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut out = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    crate::account_link::annotate(out.iter_mut());
+    Ok(out)
 }
 
 /// Recent main sessions whose launch project is EXACTLY this directory (for the
@@ -982,9 +989,12 @@ pub fn project_brief(conn: &Connection, project: &str, limit: usize) -> Result<V
             summary: r.get(9)?,
             tags: r.get(10)?,
             archived: r.get(11)?,
+            account: None,
         })
     })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut out = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    crate::account_link::annotate(out.iter_mut());
+    Ok(out)
 }
 
 pub struct Hit {
@@ -1055,12 +1065,15 @@ pub fn search(
                 summary: None,
                 tags: None,
                 archived: r.get(11)?,
+                account: None,
             },
             role: r.get(8)?,
             snippet: r.get(9)?,
         })
     })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut out = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    crate::account_link::annotate(out.iter_mut().map(|h| &mut h.row));
+    Ok(out)
 }
 
 /// Substring search for queries too short for the trigram FTS index (1-2
@@ -1138,13 +1151,16 @@ pub fn search_like(
                     summary: None,
                     tags: None,
                     archived: r.get(10)?,
+                    account: None,
                 },
                 role,
                 snippet: snippet_around(&text, &q),
             })
         },
     )?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut out = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    crate::account_link::annotate(out.iter_mut().map(|h| &mut h.row));
+    Ok(out)
 }
 
 /// Build a snippet for a LIKE hit: a window around the first (case-insensitive,
@@ -1220,6 +1236,7 @@ pub fn resolve(conn: &Connection, id_prefix: &str) -> Result<Vec<SessionRow>> {
             summary: r.get(8)?,
             tags: r.get(9)?,
             archived: r.get(10)?,
+            account: None,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1268,6 +1285,7 @@ pub fn unsummarized(
             summary: r.get(9)?,
             tags: r.get(10)?,
             archived: r.get(11)?,
+            account: None,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1381,6 +1399,7 @@ pub fn sessions_for_file(
                 summary: r.get(8)?,
                 tags: r.get(9)?,
                 archived: r.get(11)?,
+                account: None,
             },
             r.get::<_, String>(10)?,
         ))
@@ -1615,6 +1634,7 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
         summary: r.get(9)?,
         tags: r.get(10)?,
         archived: r.get(11)?,
+        account: None,
     })
 }
 

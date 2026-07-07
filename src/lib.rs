@@ -6,6 +6,7 @@
 //! dependency are [`adapters`] (parse a session file into a [`model::Session`])
 //! and [`index`] (an incremental SQLite FTS5 index over parsed sessions).
 
+pub mod account_link;
 pub mod adapters;
 pub mod blame;
 pub mod commands;
