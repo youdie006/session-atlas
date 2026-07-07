@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "task_20260707_110000_crash-path",
+  "source": "codex",
+  "status": "working",
+  "title": "GPT Pro consult",
+  "prompt": "How should we shard the ledger?",
+  "claimed_at": "2026-07-07T11:00:05.000Z"
+}

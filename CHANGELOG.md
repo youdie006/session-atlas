@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.19.1] - 2026-07-07
+
+Ecosystem-walkthrough fixes, from a fresh user's chair.
+
+### Added
+- `--account <name>` on `list` and `search`: filter by the swapdex @badge,
+  which the help text now explains.
+- prodex consult titles are the QUESTION (prompt first line) instead of
+  prodex's identical auto-title, so a list of consults is tellable apart.
+  The derived-cache version was bumped, so existing rows re-index once.
+
+### Fixed
+- A consult whose answer artifact was written but whose result JSON was not
+  (the crash path the durable ledger exists for) is indexed again: the
+  artifact is read independently of the result.
+- `trace` with an ABSOLUTE editor path now finds sessions whose stored paths
+  are repo-relative (prodex bundles relative paths; matching honors the `/`
+  boundary, so suffix lookalikes cannot match).
+- `--tool` help enumerates prodex and points at `scan` for the full list;
+  the scan footer pluralizes correctly; scan's prodex PATH shows the store
+  directory (not the registry file); the prodex resume error message no
+  longer has a hanging indent.
+
 ## [0.19.0] - 2026-07-07
 
 ### Added

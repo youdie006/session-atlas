@@ -130,7 +130,7 @@ pub fn scan() -> Result<()> {
     println!(
         "{}",
         bold(&format!(
-            "{} sessions across {} tools, {} on disk.",
+            "{} session(s) across {} tool(s), {} on disk.",
             files,
             reports.len(),
             human_size(bytes)
@@ -140,11 +140,13 @@ pub fn scan() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // a CLI surface: one arg per flag
 pub fn list(
     limit: usize,
     tool: Option<&str>,
     project: Option<&str>,
     tag: Option<&str>,
+    account: Option<&str>,
     all: bool,
     json: bool,
     no_sync: bool,
@@ -153,7 +155,11 @@ pub fn list(
     if !no_sync {
         index::sync(&mut conn, tool)?;
     }
-    let rows = index::recent(&conn, limit, tool, project, tag, all)?;
+    let mut rows = index::recent(&conn, limit, tool, project, tag, all)?;
+    if let Some(a) = account {
+        // The @badge as a filter (annotation happens inside the query fns).
+        rows.retain(|r| r.account.as_deref() == Some(a));
+    }
     if json {
         println!("{}", serde_json::to_string(&rows)?);
         return Ok(());
@@ -218,6 +224,7 @@ pub fn search(
     limit: usize,
     tool: Option<&str>,
     project: Option<&str>,
+    account: Option<&str>,
     json: bool,
     no_sync: bool,
 ) -> Result<()> {
@@ -233,11 +240,14 @@ pub fn search(
     // Korean like 회사/검색 - the most common Korean word length - and 2-char
     // latin fragments) fall back to a LIKE scan. Counted on the NFC form so
     // decomposed Korean counts by visible character, not by combining scalar.
-    let hits = if crate::util::nfc(trimmed).chars().count() < 3 {
+    let mut hits = if crate::util::nfc(trimmed).chars().count() < 3 {
         index::search_like(&conn, trimmed, limit, tool, project)?
     } else {
         index::search(&conn, trimmed, limit, tool, project)?
     };
+    if let Some(a) = account {
+        hits.retain(|h| h.row.account.as_deref() == Some(a));
+    }
     if json {
         let out: Vec<serde_json::Value> = hits
             .iter()
@@ -792,8 +802,8 @@ pub fn resume_cmd(id: &str, print_only: bool, no_sync: bool) -> Result<()> {
             return Ok(());
         }
         bail!(
-            "this prodex bridge has no recorded ChatGPT thread yet - `prodex ask` starts
-             one. You can still carry the context over: sessionwiki brief {id}"
+            "this prodex bridge has no recorded ChatGPT thread yet - `prodex ask` \
+             starts one. You can still carry the context over: sessionwiki brief {id}"
         );
     }
     let Some(info) = resume::for_session(&row.tool, path, &row.project) else {

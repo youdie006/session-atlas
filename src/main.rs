@@ -19,7 +19,7 @@ enum Command {
         /// Max sessions to show
         #[arg(short = 'n', long, default_value_t = 20)]
         limit: usize,
-        /// Filter by tool (claude-code, codex, gemini)
+        /// Filter by tool (claude-code, codex, gemini, prodex, ... - `scan` lists all)
         #[arg(long)]
         tool: Option<String>,
         /// Filter by project path substring
@@ -28,6 +28,9 @@ enum Command {
         /// Filter by tag
         #[arg(long)]
         tag: Option<String>,
+        /// Filter by swapdex account profile (the @badge; needs a swapdex switch history)
+        #[arg(long)]
+        account: Option<String>,
         /// Include subagent transcripts in the listing
         #[arg(long)]
         all: bool,
@@ -45,12 +48,15 @@ enum Command {
         /// Max sessions to show
         #[arg(short = 'n', long, default_value_t = 10)]
         limit: usize,
-        /// Filter by tool (claude-code, codex, gemini)
+        /// Filter by tool (claude-code, codex, gemini, prodex, ... - `scan` lists all)
         #[arg(long)]
         tool: Option<String>,
         /// Filter by project path substring
         #[arg(long)]
         project: Option<String>,
+        /// Filter by swapdex account profile (the @badge; needs a swapdex switch history)
+        #[arg(long)]
+        account: Option<String>,
         /// Emit as a JSON array (agent-friendly, stable field names)
         #[arg(long)]
         json: bool,
@@ -65,7 +71,7 @@ enum Command {
         /// How many candidate matches to list (the top one is briefed)
         #[arg(short = 'n', long, default_value_t = 5)]
         limit: usize,
-        /// Filter by tool (claude-code, codex, gemini)
+        /// Filter by tool (claude-code, codex, gemini, prodex, ... - `scan` lists all)
         #[arg(long)]
         tool: Option<String>,
         /// Filter by project path substring
@@ -290,6 +296,7 @@ fn main() {
             tool,
             project,
             tag,
+            account,
             all,
             json,
             no_sync,
@@ -298,6 +305,7 @@ fn main() {
             tool.as_deref(),
             project.as_deref(),
             tag.as_deref(),
+            account.as_deref(),
             all,
             json,
             no_sync,
@@ -307,6 +315,7 @@ fn main() {
             limit,
             tool,
             project,
+            account,
             json,
             no_sync,
         } => commands::search(
@@ -314,6 +323,7 @@ fn main() {
             limit,
             tool.as_deref(),
             project.as_deref(),
+            account.as_deref(),
             json,
             no_sync,
         ),

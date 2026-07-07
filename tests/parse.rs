@@ -416,7 +416,9 @@ fn prodex_consult_task_becomes_a_two_message_session() {
     // sha256("task_20260707_090000_gpt-pro-consult")[..12] - the uniform
     // short-id shape every tool gets in the index.
     assert_eq!(s.id, "567f374d7a70");
-    assert_eq!(s.title, "GPT Pro consult");
+    // The question is the title - prodex auto-titles every consult
+    // "GPT Pro consult", which would make a list of them indistinguishable.
+    assert!(s.title.starts_with("Should the retry loop"), "{}", s.title);
     assert_eq!(roles(&s), ["user", "assistant"]);
     assert!(s.messages[0].text.contains("exponential backoff"), "prompt");
     // The full pro-consult artifact wins over the truncated summary.
@@ -462,4 +464,20 @@ fn prodex_thread_url_comes_from_the_bridge_session() {
     )
     .unwrap();
     assert_eq!(sessionwiki::adapters::prodex_thread_url(&t), None);
+}
+
+// The crash path the durable ledger exists for: the answer artifact was
+// written but the result JSON was not. The answer must still be indexed.
+#[test]
+fn prodex_artifact_without_result_is_still_the_answer() {
+    let s = parse(
+        "prodex",
+        "prodex/repo-a/.bridge/tasks/task_20260707_110000_crash-path.json",
+    );
+    assert_eq!(roles(&s), ["user", "assistant"]);
+    assert!(
+        s.messages[1].text.contains("logical shards"),
+        "{}",
+        s.messages[1].text
+    );
 }

@@ -53,7 +53,7 @@ pub fn db_path() -> Result<PathBuf> {
 /// deleted - and are versioned separately by `meta.durable_version` via forward,
 /// additive-only migrations that never drop, so they survive every upgrade. The
 /// two counters are independent and must never gate each other.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6; // 6: prodex titles = the question (parse-shape change)
 
 /// Version of the durable schema this binary ships. The durable CREATE
 /// statements are frozen at this shape; every later durable change is a
@@ -1381,6 +1381,9 @@ pub fn sessions_for_file(
                 {SUMMARY_SQL}, {TAGS_SQL}, t.path, (f.archived_at IS NOT NULL)
          FROM touched t JOIN files f ON f.session_id = t.session_id
          WHERE t.path = ?1 OR t.path LIKE ?2 ESCAPE '\\'
+            OR (length(?1) > length(t.path)
+                AND substr(?1, -length(t.path)) = t.path
+                AND substr(?1, -length(t.path)-1, 1) = '/')
          GROUP BY f.session_id
          ORDER BY f.started DESC LIMIT ?3"
     ))?;

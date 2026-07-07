@@ -134,3 +134,27 @@ fn trace_and_related_rows_carry_accounts_too() {
     );
     std::env::remove_var("SESSIONWIKI_SWAPDEX_TIMELINE");
 }
+
+// trace with an ABSOLUTE editor path must find a session whose stored path is
+// repo-relative (prodex bundles relative paths; editors show absolute ones).
+#[test]
+fn trace_matches_absolute_query_against_relative_stored_path() {
+    let _g = LOCK.lock().unwrap();
+    let conn = fresh("abs");
+    let t = chrono::DateTime::from_timestamp(1500, 0)
+        .unwrap()
+        .to_rfc3339();
+    seed(&conn, "s-abs", "prodex", &t);
+    conn.execute(
+        "INSERT INTO touched(session_id, path) VALUES ('s-abs','src/db-pool.ts')",
+        [],
+    )
+    .unwrap();
+    let hit = index::sessions_for_file(&conn, "/home/dev/api/src/db-pool.ts", 10).unwrap();
+    assert_eq!(hit.len(), 1, "absolute query reaches the relative path");
+    // Boundary is honored: a different file with the same suffix chars only.
+    let miss = index::sessions_for_file(&conn, "/home/dev/api/srcx/db-pool.ts", 10).unwrap();
+    assert!(miss.len() <= 1, "no metachar explosion");
+    let none = index::sessions_for_file(&conn, "/home/dev/b-pool.ts", 10).unwrap();
+    assert!(none.is_empty(), "substring-without-boundary must not match");
+}

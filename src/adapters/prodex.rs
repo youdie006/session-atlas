@@ -87,7 +87,10 @@ impl Adapter for Prodex {
     }
 
     fn root(&self) -> Option<PathBuf> {
-        registry_path()
+        // For display/presence (`scan` shows this): the registry's directory,
+        // consistent with every other adapter showing a store DIRECTORY.
+        // Discovery reads the registry file itself.
+        registry_path().and_then(|p| p.parent().map(|d| d.to_path_buf()))
     }
 
     fn discover(&self) -> Discovered {
@@ -133,17 +136,29 @@ impl Adapter for Prodex {
             hex
         };
         let prompt = task["prompt"].as_str().unwrap_or("").trim().to_string();
-        let title = task["title"]
-            .as_str()
-            .filter(|t| !t.trim().is_empty())
-            .map(|t| t.trim().to_string())
-            .unwrap_or_else(|| {
-                let mut t: String = prompt.chars().take(80).collect();
-                if t.is_empty() {
-                    t = "(untitled task)".into();
-                }
-                t
-            });
+        // The QUESTION is the most informative title a consult can have -
+        // prodex auto-titles most consults identically ("GPT Pro consult"),
+        // which makes a list of them indistinguishable. Task title is the
+        // fallback for promptless tasks.
+        let title = {
+            let head: String = prompt
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect();
+            if !head.is_empty() {
+                head
+            } else {
+                task["title"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or("(untitled task)")
+                    .to_string()
+            }
+        };
         // tasks/<id>.json -> the bridge root is two levels up from tasks/.
         let bridge = path.parent().and_then(|p| p.parent());
         let repo = bridge.and_then(|b| b.parent());
@@ -165,46 +180,48 @@ impl Adapter for Prodex {
             });
         }
         // The answer: the full pro-consult artifact when present, else the
-        // result summary. Bounded read - an artifact is normally a few KB.
+        // result summary. The artifact is read INDEPENDENTLY of the result -
+        // a crash between the two writes must not make an answer that exists
+        // on disk unindexable. Bounded read; an artifact is normally a few KB.
         let mut ended = None;
         if let Some(bridge) = bridge {
-            let result_path = bridge.join("results").join(format!("{task_id}.json"));
-            if let Ok(bytes) = std::fs::read(&result_path) {
+            let artifact_text = std::fs::read_to_string(
+                bridge
+                    .join("artifacts")
+                    .join("pro-consults")
+                    .join(format!("{task_id}.md")),
+            )
+            .ok()
+            .map(|t| {
+                let mut t = t.trim().to_string();
+                const CAP: usize = 64 * 1024;
+                if t.len() > CAP {
+                    let mut end = CAP;
+                    while !t.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    t.truncate(end);
+                }
+                t
+            })
+            .filter(|t| !t.is_empty());
+            let mut summary = None;
+            if let Ok(bytes) = std::fs::read(bridge.join("results").join(format!("{task_id}.json")))
+            {
                 if let Ok(result) = serde_json::from_slice::<Value>(&bytes) {
                     ended = result["created_at"].as_str().and_then(parse_ts);
-                    let artifact = bridge
-                        .join("artifacts")
-                        .join("pro-consults")
-                        .join(format!("{task_id}.md"));
-                    let answer = std::fs::read_to_string(&artifact)
-                        .ok()
-                        .map(|t| {
-                            let mut t = t.trim().to_string();
-                            const CAP: usize = 64 * 1024;
-                            if t.len() > CAP {
-                                let mut end = CAP;
-                                while !t.is_char_boundary(end) {
-                                    end -= 1;
-                                }
-                                t.truncate(end);
-                            }
-                            t
-                        })
-                        .filter(|t| !t.is_empty())
-                        .or_else(|| {
-                            result["summary"]
-                                .as_str()
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                        });
-                    if let Some(text) = answer {
-                        messages.push(Message {
-                            role: Role::Assistant,
-                            text,
-                            ts: ended.or(started),
-                        });
-                    }
+                    summary = result["summary"]
+                        .as_str()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
                 }
+            }
+            if let Some(text) = artifact_text.or(summary) {
+                messages.push(Message {
+                    role: Role::Assistant,
+                    text,
+                    ts: ended.or(started),
+                });
             }
         }
 
