@@ -21,8 +21,11 @@ pub fn serve(port: u16, no_open: bool, sync: bool) -> Result<()> {
     if !sync {
         println!("(read-only view; run `sessionwiki list` or `web --sync` to refresh the index)");
     }
-    if !no_open {
+    let wsl = is_wsl();
+    if should_open_browser(no_open, wsl) {
         open_browser(&url);
+    } else if wsl && !no_open {
+        println!("(WSL detected - open the URL above in your browser; auto-open is off here to avoid stray windows)");
     }
 
     for request in server.incoming_requests() {
@@ -307,6 +310,22 @@ fn hex(b: Option<&u8>) -> Option<u8> {
     (*b? as char).to_digit(16).map(|d| d as u8)
 }
 
+/// True when running under WSL, where `xdg-open` pops a WSLg/Windows browser
+/// window on EVERY `web` start (a stray blank window during repeated testing)
+/// and often can't even reach the loopback server. Detected via the kernel
+/// string, which carries "microsoft" on WSL1/WSL2.
+fn is_wsl() -> bool {
+    std::fs::read_to_string("/proc/version")
+        .map(|v| v.to_ascii_lowercase().contains("microsoft"))
+        .unwrap_or(false)
+}
+
+/// Whether to auto-open the browser: never when `--no-open`, and never on WSL
+/// (print the URL there instead - see `is_wsl`).
+fn should_open_browser(no_open: bool, wsl: bool) -> bool {
+    !no_open && !wsl
+}
+
 fn open_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let cmd = "open";
@@ -325,7 +344,18 @@ const INDEX_HTML: &str = include_str!("webui.html");
 
 #[cfg(test)]
 mod tests {
-    use super::{host_matches, origin_ok};
+    use super::{host_matches, origin_ok, should_open_browser};
+
+    #[test]
+    fn wsl_never_auto_opens_a_browser() {
+        // Native (not WSL): open unless the user said --no-open.
+        assert!(should_open_browser(false, false));
+        assert!(!should_open_browser(true, false));
+        // WSL: never auto-open, so `web` stops popping a stray Chrome/WSLg
+        // window on every start - the URL is printed instead.
+        assert!(!should_open_browser(false, true));
+        assert!(!should_open_browser(true, true));
+    }
 
     #[test]
     fn host_matches_only_loopback() {

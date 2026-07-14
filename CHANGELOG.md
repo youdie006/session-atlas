@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.19.4] - 2026-07-14
+
+### Fixed
+- **`sessionwiki web` no longer pops a stray browser window on WSL.** On WSL,
+  `xdg-open` launches a WSLg/Windows browser on every `web` start - a blank
+  window each time you restart the server during development, and it often
+  cannot even reach the loopback address. `web` now detects WSL and prints the
+  URL instead of auto-opening; native Linux/macOS keep the existing auto-open
+  (still overridable with `--no-open`).
+
 ## [0.19.3] - 2026-07-14
 
 Codex/Claude transcript formats drifted; a comprehensive audit against the
