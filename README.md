@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/youdie006/sessionwiki/main/docs/banner-dark.png">
-  <img src="docs/banner.png" alt="sessionwiki — every AI coding session you've ever had: searchable, linkable, resumable, across 11 AI coding tools. 100% local.">
+  <img src="docs/banner.png" alt="sessionwiki — every AI coding session you've ever had: searchable, linkable, resumable, across 12 AI coding tools. 100% local.">
 </picture>
 
 <a href="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml"><img src="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -343,7 +343,7 @@ across tools.
 
 Honest tradeoff: a dedicated single-tool viewer will have more tool-specific
 polish than sessionwiki's adapter for that one tool. The bet is the cross-tool
-spine plus code provenance, over [eleven tools today](#supported-tools) and
+spine plus code provenance, over [twelve tools today](#supported-tools) and
 growing &mdash; adapters are the #1 thing [PRs](#adding-an-adapter) help with.
 
 ## Adding an adapter
