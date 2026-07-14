@@ -1,0 +1,6 @@
+{"timestamp":"2026-07-13T08:00:00.000Z","type":"session_meta","payload":{"id":"22222222-2222-4222-8222-222222222222","cwd":"/home/u/proj"}}
+{"timestamp":"2026-07-13T08:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"continue"}}
+{"timestamp":"2026-07-13T08:00:01.001Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}}
+{"timestamp":"2026-07-13T08:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Working on it."}]}}
+{"timestamp":"2026-07-13T08:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"continue"}}
+{"timestamp":"2026-07-13T08:00:03.001Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}}

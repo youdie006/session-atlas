@@ -1,0 +1,2 @@
+{"timestamp":"2026-07-13T07:05:40.550Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Explain the synthetic parser failure."}],"internal_chat_message_metadata_passthrough":{"turn_id":"synthetic-turn"}}}
+{"timestamp":"2026-07-13T07:05:40.551Z","type":"event_msg","payload":{"type":"user_message","message":"Explain the synthetic parser failure.","images":[],"local_images":[],"text_elements":[]}}

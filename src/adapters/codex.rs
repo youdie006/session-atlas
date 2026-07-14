@@ -3,6 +3,7 @@ use crate::model::{Message, Role, Session};
 use crate::util::{short_id, truncate};
 use anyhow::{Context, Result};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -56,6 +57,11 @@ impl Adapter for Codex {
         let mut cwd: Option<String> = None;
         let mut started = None;
         let mut ended = None;
+        // Current rollouts carry each user prompt TWICE (event_msg AND
+        // response_item). Counted multisets cancel each pair exactly once, so
+        // a genuinely repeated prompt ("continue" twice) still indexes twice.
+        let mut response_user_texts: HashMap<String, u32> = HashMap::new();
+        let mut event_user_texts: HashMap<String, u32> = HashMap::new();
 
         for line in reader.lines() {
             let Ok(line) = line else { continue };
@@ -101,16 +107,26 @@ impl Adapter for Codex {
                                 if role == Role::User && is_boilerplate(text) {
                                     continue;
                                 }
+                                if role == Role::User {
+                                    if let Some(n) =
+                                        event_user_texts.get_mut(text).filter(|n| **n > 0)
+                                    {
+                                        *n -= 1; // pairs with an already-pushed event_msg
+                                        continue;
+                                    }
+                                    *response_user_texts.entry(text.to_string()).or_insert(0) += 1;
+                                }
                                 push(&mut messages, role, text, ts);
                             }
                         }
-                        Some("function_call") => {
+                        Some("function_call" | "custom_tool_call") => {
                             let name = v
                                 .pointer("/payload/name")
                                 .and_then(Value::as_str)
                                 .unwrap_or("?");
                             let args = v
                                 .pointer("/payload/arguments")
+                                .or_else(|| v.pointer("/payload/input"))
                                 .and_then(Value::as_str)
                                 .unwrap_or("");
                             // Codex applies edits via an apply_patch envelope,
@@ -130,7 +146,13 @@ impl Adapter for Codex {
                     Some("user_message") => {
                         if let Some(t) = v.pointer("/payload/message").and_then(Value::as_str) {
                             if !is_boilerplate(t) {
-                                push(&mut messages, Role::User, t, ts);
+                                if let Some(n) = response_user_texts.get_mut(t).filter(|n| **n > 0)
+                                {
+                                    *n -= 1; // pairs with an already-pushed response_item
+                                } else {
+                                    *event_user_texts.entry(t.to_string()).or_insert(0) += 1;
+                                    push(&mut messages, Role::User, t, ts);
+                                }
                             }
                         }
                     }
@@ -141,6 +163,25 @@ impl Adapter for Codex {
                     }
                     _ => {}
                 },
+                Some("message") => {
+                    let role = match v.get("role").and_then(Value::as_str) {
+                        Some("user") => Role::User,
+                        Some("assistant") => Role::Assistant,
+                        _ => continue,
+                    };
+                    let Some(Value::Array(blocks)) = v.get("content") else {
+                        continue;
+                    };
+                    for b in blocks {
+                        let Some(text) = b.get("text").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        if role == Role::User && is_boilerplate(text) {
+                            continue;
+                        }
+                        push(&mut messages, role, text, ts);
+                    }
+                }
                 _ => {}
             }
         }
@@ -198,6 +239,8 @@ fn is_boilerplate(text: &str) -> bool {
         || t.starts_with("<environment_context>")
         || t.starts_with("<ENVIRONMENT_CONTEXT>")
         || t.starts_with("<turn_context>")
+        || t.starts_with("# AGENTS.md instructions")
+        || t.starts_with("<INSTRUCTIONS>")
 }
 
 fn push(

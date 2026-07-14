@@ -1,0 +1,2 @@
+{"type":"message","id":"synthetic-user","role":"user","content":[{"type":"input_text","text":"Parse the legacy synthetic rollout."}]}
+{"type":"message","id":"synthetic-assistant","role":"assistant","content":[{"type":"output_text","text":"The legacy synthetic rollout is parsed."}]}

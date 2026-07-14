@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.19.3] - 2026-07-14
+
+Codex/Claude transcript formats drifted; a comprehensive audit against the
+real corpus caught five parsing gaps, all fixed here.
+
+### Fixed
+- **Codex user messages no longer index twice.** Current rollouts carry each
+  prompt BOTH as an `event_msg` and as a `response_item`; the adapter now
+  cancels each pair exactly once (counted, so a genuinely repeated prompt -
+  "continue" twice - still keeps every occurrence).
+- **AGENTS.md instructions no longer become session titles.** The new
+  `# AGENTS.md instructions for <path>` / `<INSTRUCTIONS>` user-message shape
+  is treated as boilerplate, like the older environment-context wrappers.
+- **2025-era Codex rollouts parse again.** Files that predate the `payload`
+  envelope (bare `{"type":"message"}` lines) indexed as empty "(no user
+  prompt)" sessions; they are now parsed like their modern counterparts.
+- **`custom_tool_call` items are indexed** and their inputs feed `trace` /
+  `blame` path extraction, so edits made through custom tools are no longer
+  invisible.
+- **Claude titles use the `ai-title` event.** Current Claude Code transcripts
+  stopped emitting `summary` events; titles now fall back summary ->
+  ai-title -> first user message instead of always the first prompt.
+
 ## [0.19.2] - 2026-07-07
 
 ### Fixed

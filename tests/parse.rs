@@ -96,6 +96,17 @@ fn claude_subagent_is_flagged() {
 }
 
 #[test]
+fn claude_ai_title_precedes_first_user_message() {
+    let s = parse(
+        "claude-code",
+        "claude-code/proj-a/0a000000-0000-4000-8000-000000000002.jsonl",
+    );
+
+    assert_eq!(s.title, "Repair synthetic schema drift");
+    assert_eq!(roles(&s), ["user"]);
+}
+
+#[test]
 fn codex_session_with_schema_variants() {
     let s = parse(
         "codex",
@@ -126,6 +137,71 @@ fn codex_session_with_schema_variants() {
         s.touched,
         ["src/rate_limiter.rs", "tests/rate_limiter_props.rs"]
     );
+}
+
+#[test]
+fn codex_deduplicates_user_message_schema_variants() {
+    let s = parse(
+        "codex",
+        "codex/rollout-2026-07-13T07-05-40-duplicate-user.jsonl",
+    );
+
+    assert_eq!(roles(&s), ["user"]);
+    assert_eq!(s.messages[0].text, "Explain the synthetic parser failure.");
+}
+
+#[test]
+fn codex_drops_current_agents_instructions_boilerplate() {
+    let s = parse(
+        "codex",
+        "codex/rollout-2026-07-13T16-06-13-agents-instructions.jsonl",
+    );
+
+    assert_eq!(s.title, "Fix the synthetic parser.");
+    assert_eq!(roles(&s), ["user"]);
+    assert!(s
+        .messages
+        .iter()
+        .all(|message| !message.text.starts_with("# AGENTS.md instructions")));
+}
+
+#[test]
+fn codex_keeps_genuinely_repeated_prompts() {
+    // Each prompt arrives in BOTH shapes (event_msg + response_item); the
+    // dedup must cancel per PAIR, so a user who sends "continue" twice still
+    // indexes two user messages - not one.
+    let s = parse(
+        "codex",
+        "codex/rollout-2026-07-13T08-00-00-repeated-prompt.jsonl",
+    );
+
+    assert_eq!(roles(&s), ["user", "assistant", "user"]);
+    assert_eq!(s.messages[0].text, "continue");
+    assert_eq!(s.messages[2].text, "continue");
+}
+
+#[test]
+fn codex_parses_legacy_bare_messages() {
+    let s = parse(
+        "codex",
+        "codex/rollout-2025-08-25T00-04-27-bare-message.jsonl",
+    );
+
+    assert_eq!(roles(&s), ["user", "assistant"]);
+    assert_eq!(s.title, "Parse the legacy synthetic rollout.");
+}
+
+#[test]
+fn codex_indexes_custom_tool_calls_and_their_patched_paths() {
+    let s = parse(
+        "codex",
+        "codex/rollout-2026-07-13T16-05-05-custom-tool-call.jsonl",
+    );
+
+    assert_eq!(roles(&s), ["user", "tool"]);
+    assert!(s.messages[1].text.starts_with("exec "));
+    assert!(s.messages[1].text.contains("src/synthetic.rs"));
+    assert_eq!(s.touched, ["src/synthetic.rs"]);
 }
 
 #[test]

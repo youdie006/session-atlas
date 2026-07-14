@@ -1,0 +1,2 @@
+{"type":"ai-title","aiTitle":"Repair synthetic schema drift","sessionId":"synthetic-session"}
+{"type":"user","cwd":"/home/dev/proj-a","sessionId":"synthetic-session","timestamp":"2026-07-13T08:00:00.000Z","message":{"role":"user","content":"This first prompt must not become the title."}}

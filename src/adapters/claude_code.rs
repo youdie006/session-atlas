@@ -55,6 +55,7 @@ impl Adapter for ClaudeCode {
         let mut touched: Vec<String> = Vec::new();
         let mut cwd: Option<String> = None;
         let mut summary: Option<String> = None;
+        let mut ai_title: Option<String> = None;
         let mut started = None;
         let mut ended = None;
 
@@ -84,6 +85,11 @@ impl Adapter for ClaudeCode {
                 Some("summary") => {
                     if summary.is_none() {
                         summary = v.get("summary").and_then(Value::as_str).map(String::from);
+                    }
+                }
+                Some("ai-title") => {
+                    if ai_title.is_none() {
+                        ai_title = v.get("aiTitle").and_then(Value::as_str).map(String::from);
                     }
                 }
                 Some("user") => {
@@ -162,6 +168,7 @@ impl Adapter for ClaudeCode {
                 .unwrap_or_default()
         });
         let title = summary
+            .or(ai_title)
             .map(|s| truncate(&s, 80))
             .unwrap_or_else(|| title_from_messages(&messages));
         let subagent = path.to_string_lossy().contains("/subagents/");
