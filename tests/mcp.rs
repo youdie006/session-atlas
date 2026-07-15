@@ -88,7 +88,7 @@ fn golden_handshake_search_and_stream_purity() {
     assert_eq!(lines[0]["id"], 1);
     assert_eq!(lines[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(lines[1]["id"], "two");
-    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 6);
     assert_eq!(lines[2]["id"], 3);
     let text = lines[2]["result"]["content"][0]["text"].as_str().unwrap();
     assert!(

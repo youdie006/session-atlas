@@ -1,5 +1,5 @@
 //! A hand-rolled, stdio-only MCP server: newline-delimited JSON-RPC 2.0,
-//! four read-only tools over the local session index. No network (stdio only),
+//! six read-only tools over the local session index. No network (stdio only),
 //! no sync, no writes (the DB handle is read-only). The server owns every byte
 //! written to stdout; all logging goes to stderr.
 
@@ -149,6 +149,35 @@ fn tools_list() -> Value {
                 },
                 "required": ["id"]
             }
+        },
+        {
+            "name": "related_sessions",
+            "title": "Find sessions related to one you have",
+            "description": "Given a session id, return the sessions RELATED to it (shared project, edited files, or tags) - how a session finds its siblings before reading one with session_window. Returns bounded rows (id, tool, title, project, a preview tail). Read-only, local.",
+            "annotations": {"readOnlyHint": true},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "The short session id from search_sessions or trace_file."},
+                    "limit": {"type": "integer", "description": "Max results, 1-30 (default 8)."},
+                    "exclude_id": {"type": "string", "description": "Drop this session id/prefix from the results (e.g. your own)."}
+                },
+                "required": ["id"]
+            }
+        },
+        {
+            "name": "recent_sessions",
+            "title": "List the most recent sessions (who is around)",
+            "description": "Return the most recent AI coding sessions across every tool (Claude Code, Codex, and more) - 'who is around' so a live agent can find sibling sessions to read with session_window. Bounded to a recent window (never a full-history scan). Pass exclude_id to drop your own session. Returns bounded rows (id, tool, title, project, a preview tail). Read-only, local.",
+            "annotations": {"readOnlyHint": true},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max results, 1-30 (default 10)."},
+                    "tool": {"type": "string", "description": "Restrict to one tool, e.g. codex or claude-code."},
+                    "exclude_id": {"type": "string", "description": "Drop this session id/prefix from the results (e.g. your own)."}
+                }
+            }
         }
     ]})
 }
@@ -276,7 +305,71 @@ fn tool_call(conn: &mut Option<Connection>, params: &Value) -> Result<Value, (i6
         "trace_file" => Ok(tool_trace(conn, &args)),
         "get_session_brief" => Ok(tool_brief(conn, &args)),
         "session_window" => Ok(tool_window(conn, &args)),
+        "related_sessions" => Ok(tool_related(conn, &args)),
+        "recent_sessions" => Ok(tool_recent(conn, &args)),
         other => Err((-32602, format!("Unknown tool: {other}"))),
+    }
+}
+
+/// Serialize discovery rows to neutralized JSON (id + tool + title + project +
+/// a preview tail; the absolute path is never serialized), dropping any row that
+/// matches `exclude` (the caller's own session id/prefix), capped to `limit`.
+fn discovery_rows(rows: &[crate::index::SessionRow], exclude: Option<&str>, limit: usize) -> Value {
+    let out: Vec<Value> = rows
+        .iter()
+        .filter(|r| match exclude {
+            Some(e) if !e.is_empty() => !r.session_id.starts_with(e),
+            _ => true,
+        })
+        .take(limit)
+        .map(|r| {
+            let mut v = serde_json::to_value(r).unwrap_or_else(|_| json!({}));
+            neutralize_row(&mut v);
+            v
+        })
+        .collect();
+    json_result(out)
+}
+
+/// Discovery: sessions RELATED to one you already have an id for (shared
+/// project, files, or tags) - the way a session finds its siblings before
+/// pulling one with `session_window`.
+fn tool_related(conn: &mut Option<Connection>, args: &Value) -> Value {
+    let id = args.get("id").and_then(Value::as_str).unwrap_or("").trim();
+    if id.is_empty() {
+        return text_result("id is required".into(), true);
+    }
+    let limit = clamp_arg(args, "limit", 8, 1, 30) as usize;
+    let exclude = args.get("exclude_id").and_then(Value::as_str);
+    let Some(conn) = get_conn(conn) else {
+        return text_result("[]".into(), false);
+    };
+    match crate::index::related(conn, id, limit + 1) {
+        Ok(rows) => discovery_rows(&rows, exclude, limit),
+        Err(e) => text_result(
+            format!("related failed: {}", safe_text(&e.to_string())),
+            true,
+        ),
+    }
+}
+
+/// Discovery: the most RECENT sessions across every tool - "who is around" so a
+/// live agent can find sibling sessions. Bounded to a recent window by default
+/// (never a full-history scan); pass `exclude_id` to drop your own session.
+fn tool_recent(conn: &mut Option<Connection>, args: &Value) -> Value {
+    let limit = clamp_arg(args, "limit", 10, 1, 30) as usize;
+    let tool = args.get("tool").and_then(Value::as_str);
+    let exclude = args.get("exclude_id").and_then(Value::as_str);
+    let Some(conn) = get_conn(conn) else {
+        return text_result("[]".into(), false);
+    };
+    // +2 so excluding the caller still yields a full page.
+    match crate::index::recent(conn, limit + 2, tool, None, None, false) {
+        Ok(rows) => discovery_rows(&rows, exclude, limit),
+        Err(e) => text_result(
+            format!("recent failed: {}", safe_text(&e.to_string())),
+            true,
+        ),
     }
 }
 
@@ -906,7 +999,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_four_readonly_tools() {
+    fn tools_list_has_six_readonly_tools() {
         let v = call(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).unwrap();
         let tools = v["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -916,7 +1009,9 @@ mod tests {
                 "search_sessions",
                 "trace_file",
                 "get_session_brief",
-                "session_window"
+                "session_window",
+                "related_sessions",
+                "recent_sessions"
             ]
         );
         for t in tools {
