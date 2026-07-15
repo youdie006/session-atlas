@@ -557,7 +557,21 @@ fn print_native_resume(tool: &str, path: &std::path::Path, target: &std::path::P
     }
 }
 
-pub fn show(id: &str, full: bool, json: bool, outline: bool, no_sync: bool) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+pub fn show(
+    id: &str,
+    full: bool,
+    json: bool,
+    outline: bool,
+    window: bool,
+    budget: Option<usize>,
+    live: bool,
+    no_sync: bool,
+) -> Result<()> {
+    // `--live`: never pay for an index sync - `load_session` reads the session
+    // FILE directly (0-delay tail), so the content is already fresh; the index
+    // only matters for finding/searching, not for reading a known session.
+    let no_sync = no_sync || live;
     let mut conn = index::open()?;
     let row = resolve_lazy(&mut conn, id, no_sync)?;
 
@@ -566,6 +580,17 @@ pub fn show(id: &str, full: bool, json: bool, outline: bool, no_sync: bool) -> R
     if json {
         println!("{}", serde_json::to_string_pretty(&session)?);
         return Ok(());
+    }
+
+    // Agent-friendly bounded window: the real turns, tool outputs folded to
+    // head+tail, optionally capped to the recent tail by a token budget.
+    if window {
+        let opts = crate::window::WindowOpts {
+            // The flag is in tokens; the renderer budgets chars (~4 per token).
+            budget_chars: budget.map(|t| t.saturating_mul(4)),
+            ..Default::default()
+        };
+        return page_or_print(&crate::window::render_window(&session, &opts));
     }
 
     // Buffer the transcript, then page it: a `show --full` of a multi-thousand-

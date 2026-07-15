@@ -1,5 +1,5 @@
 //! A hand-rolled, stdio-only MCP server: newline-delimited JSON-RPC 2.0,
-//! three read-only tools over the local session index. No network (stdio only),
+//! four read-only tools over the local session index. No network (stdio only),
 //! no sync, no writes (the DB handle is read-only). The server owns every byte
 //! written to stdout; all logging goes to stderr.
 
@@ -135,6 +135,20 @@ fn tools_list() -> Value {
                 },
                 "required": ["id"]
             }
+        },
+        {
+            "name": "session_window",
+            "title": "Read another session's recent conversation (bounded)",
+            "description": "Return the ACTUAL recent turns of one session (not a summary) so you can see what a sibling agent/session is doing. Tool outputs are folded to head+tail, and the render is capped to the recent tail by a token budget. Reads the session file directly (0-delay), so a still-running session's latest turns show without waiting for a sync. Use `get_session_brief` for a shorter digest, or `search_sessions`/`trace_file` to find the id. Read-only, local.",
+            "annotations": {"readOnlyHint": true},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "The short session id from search_sessions or trace_file."},
+                    "budget_tokens": {"type": "integer", "description": "Approx token cap for the window, 200-8000 (default 1500). The most recent turns within the budget are kept."}
+                },
+                "required": ["id"]
+            }
         }
     ]})
 }
@@ -261,8 +275,75 @@ fn tool_call(conn: &mut Option<Connection>, params: &Value) -> Result<Value, (i6
         "search_sessions" => Ok(tool_search(conn, &args)),
         "trace_file" => Ok(tool_trace(conn, &args)),
         "get_session_brief" => Ok(tool_brief(conn, &args)),
+        "session_window" => Ok(tool_window(conn, &args)),
         other => Err((-32602, format!("Unknown tool: {other}"))),
     }
+}
+
+/// A bounded, agent-consumable window of ONE session: the real turns (not a
+/// lossy summary), tool outputs folded to head+tail, capped to the recent tail
+/// by a token budget. Reads the session file directly (0-delay), so a
+/// still-running sibling session's latest turns show without waiting for a sync.
+fn tool_window(conn: &mut Option<Connection>, args: &Value) -> Value {
+    let id = args.get("id").and_then(Value::as_str).unwrap_or("").trim();
+    if id.is_empty() {
+        return text_result("id is required".into(), true);
+    }
+    let budget_tokens = clamp_arg(args, "budget_tokens", 1500, 200, 8000) as usize;
+    let Some(conn) = get_conn(conn) else {
+        return text_result("no index yet - run `sessionwiki sync` once".into(), true);
+    };
+    let matches = match crate::index::resolve(conn, id) {
+        Ok(m) => m,
+        Err(e) => {
+            return text_result(
+                format!("lookup failed: {}", safe_text(&e.to_string())),
+                true,
+            )
+        }
+    };
+    let row = match matches.as_slice() {
+        [] => {
+            return text_result(
+                format!("no session matches id '{}'; search first", safe_text(id)),
+                true,
+            )
+        }
+        [one] => one,
+        many => {
+            let list: Vec<String> = many
+                .iter()
+                .map(|m| {
+                    format!(
+                        "{} {} {}",
+                        m.session_id,
+                        m.tool,
+                        crate::commands::neutralize_field(&m.title)
+                    )
+                })
+                .collect();
+            return text_result(
+                format!(
+                    "ambiguous id '{}' - matches:\n{}",
+                    safe_text(id),
+                    list.join("\n")
+                ),
+                true,
+            );
+        }
+    };
+    let session = match crate::commands::load_session(conn, row) {
+        Ok(s) => s,
+        Err(e) => return text_result(format!("read failed: {}", safe_text(&e.to_string())), true),
+    };
+    let opts = crate::window::WindowOpts {
+        budget_chars: Some(budget_tokens.saturating_mul(4)),
+        ..Default::default()
+    };
+    text_result(
+        safe_text(&crate::window::render_window(&session, &opts)),
+        false,
+    )
 }
 
 fn tool_search(conn: &mut Option<Connection>, args: &Value) -> Value {
@@ -825,13 +906,18 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_three_readonly_tools() {
+    fn tools_list_has_four_readonly_tools() {
         let v = call(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).unwrap();
         let tools = v["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
-            ["search_sessions", "trace_file", "get_session_brief"]
+            [
+                "search_sessions",
+                "trace_file",
+                "get_session_brief",
+                "session_window"
+            ]
         );
         for t in tools {
             assert_eq!(t["annotations"]["readOnlyHint"], true);

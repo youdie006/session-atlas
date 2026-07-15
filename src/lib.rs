@@ -18,3 +18,4 @@ pub mod model;
 pub mod resume;
 pub mod util;
 pub mod web;
+pub mod window;

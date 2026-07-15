@@ -113,6 +113,16 @@ enum Command {
         /// Show a digest instead: every user turn plus how the session ended
         #[arg(long)]
         outline: bool,
+        /// Agent-friendly bounded window: the real turns, but tool outputs
+        /// folded to head+tail (add --budget to keep only the recent tail)
+        #[arg(long)]
+        window: bool,
+        /// With --window, cap the render to about this many tokens (recent tail)
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Read the session file directly (0-delay tail), bypassing the index
+        #[arg(long)]
+        live: bool,
         /// Skip the index sync; only sync if the id is not already indexed
         #[arg(long)]
         no_sync: bool,
@@ -354,8 +364,11 @@ fn main() {
             full,
             json,
             outline,
+            window,
+            budget,
+            live,
             no_sync,
-        } => commands::show(&id, full, json, outline, no_sync),
+        } => commands::show(&id, full, json, outline, window, budget, live, no_sync),
         Command::Resume { id, print, no_sync } => commands::resume_cmd(&id, print, no_sync),
         Command::Migrate { id, dir, no_sync } => commands::migrate_cmd(&id, &dir, no_sync),
         Command::Summarize {
