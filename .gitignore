@@ -22,3 +22,6 @@ Thumbs.db
 # Agent runtime/local config (NOT .claude-plugin, which is an intentional
 # product file that must stay tracked)
 .claude/
+
+# prodex local artifacts (not part of the project)
+.bridge/
