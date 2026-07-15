@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.20.0] - 2026-07-15
+
+Cross-session context for agents: one agent can now see what a sibling session
+(or its other self) is doing, as the ACTUAL recent conversation - not a lossy
+summary - bounded so it can't flood the reader's context.
+
+### Added
+- **`sessionwiki show <id> --window [--budget N]`** renders a session's real
+  recent turns with tool outputs folded to head+tail, capped to the recent tail
+  by a token budget, an orientation header + role labels, and a
+  `show <id> --full` drill-down hint. `--live` reads the session file directly
+  (0-delay), bypassing the index sync.
+- **MCP discovery + read tools** so an agent can find and read sibling sessions:
+  - `session_window(id, budget_tokens)` - the bounded window above, over stdio.
+  - `recent_sessions(limit, tool, exclude_id)` - the most recent sessions across
+    every tool ("who's around"), bounded to a recent window.
+  - `related_sessions(id, limit, exclude_id)` - a session's siblings by shared
+    project, edited files, or tags.
+  Both discovery tools take `exclude_id` to drop your own session. This closes
+  the chain: `recent`/`search`/`related` -> id -> `session_window`. Verified
+  cross-tool (Claude Code and Codex sessions see each other).
+
+### Fixed
+- (from 0.19.4) `sessionwiki web` no longer auto-opens a browser on WSL, where
+  `xdg-open` pops a stray WSLg/Windows window on every start and often can't
+  reach the loopback server; it prints the URL instead. Native Linux/macOS keep
+  auto-open.
+
 ## [0.19.4] - 2026-07-14
 
 ### Fixed
