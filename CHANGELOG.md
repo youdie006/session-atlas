@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.21.0] - 2026-07-16
+
+Harden the MCP read path for in-loop agent-to-agent reads: a stable window
+contract and freshness on every read tool.
+
+### Added
+- **`session_window` (MCP) now returns versioned JSON** (schema `sessionwiki.window/1`) instead of an unversioned text render, so a reading agent can parse a sibling's window rather than scrape it. Fields: `id`, `tool`, `project`, `title`, `started`/`ended`, `messages` (total turns), `large` (indexed head+tail), `budget_tokens`, `omitted_leading`, `turns[]` (each with `i` = stable turn index, `role` = user/assistant/tool, `text`, and `truncated` or `folded`+`bytes`), and a `drilldown` hint. Deterministic for a fixed (id, budget); the recent tail is kept within budget and the whole object is size-guarded so it is always valid JSON. Tool output is folded head+tail and byte-bounded.
+- **Per-turn drill-down:** `session_window(id, turn=<i>)` returns that one turn's full retained text (schema `sessionwiki.turn/1`), untruncated by the window's folding/cap - fetch-full-content-on-demand for a turn seen in a window. (Tool outputs are already capped at parse time, so this recovers folded-out lines, not adapter-dropped bulk.)
+
+### Changed
+- **`search_sessions` (MCP) freshens in the background**, matching `recent_sessions` (0.20.2): it serves the current index immediately and kicks a bounded incremental sync, so a just-created sibling shows on a subsequent search without the request ever waiting on the store walk. `session_window` already reads the target file directly (live). This closes the last MCP read tool that did no freshen; incremental parsing (only files whose mtime/size changed) was already in place.
+
 ## [0.20.2] - 2026-07-16
 
 ### Changed

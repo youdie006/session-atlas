@@ -139,13 +139,14 @@ fn tools_list() -> Value {
         {
             "name": "session_window",
             "title": "Read another session's recent conversation (bounded)",
-            "description": "Return the ACTUAL recent turns of one session (not a summary) so you can see what a sibling agent/session is doing. Tool outputs are folded to head+tail, and the render is capped to the recent tail by a token budget. Reads the session file directly (0-delay), so a still-running session's latest turns show without waiting for a sync. Use `get_session_brief` for a shorter digest, or `search_sessions`/`trace_file` to find the id. Read-only, local.",
+            "description": "Return the ACTUAL recent turns of one session (not a summary) as versioned JSON (schema \"sessionwiki.window/1\"), so you can see what a sibling agent/session is doing. Fields: id, tool, project, title, started/ended, messages (total turns), large (indexed head+tail), budget_tokens, omitted_leading, turns[] (each with i=index, role=user|assistant|tool, text, and truncated/folded+bytes), drilldown. Tool outputs are folded head+tail and byte-bounded; the recent tail is kept within budget_tokens. Reads the session file directly (0-delay), so a still-running session's latest turns show without a sync. Pass `turn` (a turn's i) to fetch that one turn's full retained text, untruncated by the window's folding/cap (schema \"sessionwiki.turn/1\"; tool outputs are already capped at parse time). Use `search_sessions`/`trace_file`/`recent_sessions` to find the id. Read-only, local.",
             "annotations": {"readOnlyHint": true},
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "description": "The short session id from search_sessions or trace_file."},
-                    "budget_tokens": {"type": "integer", "description": "Approx token cap for the window, 200-8000 (default 1500). The most recent turns within the budget are kept."}
+                    "budget_tokens": {"type": "integer", "description": "Approx token cap for the window, 200-8000 (default 1500). The most recent turns within the budget are kept."},
+                    "turn": {"type": "integer", "description": "Optional: a turn index i from a prior window's turns[]. Returns just that turn's full untruncated text (drill-down) instead of the window."}
                 },
                 "required": ["id"]
             }
@@ -222,6 +223,64 @@ fn json_result(mut rows: Vec<Value>) -> Value {
             return json!({"content": [{"type": "text", "text": s}], "isError": false});
         }
         rows.pop();
+    }
+}
+
+/// A single JSON OBJECT result (session_window / turn drill-down). Like
+/// [`json_result`] but for an object: if it would exceed the MCP text cap, drop
+/// the OLDEST kept turn (bumping `omitted_leading`) until it fits, so the output
+/// is always valid JSON and preserves the recent tail. An object with no `turns`
+/// array (a single-turn fetch) falls back to the char cap of [`text_result`].
+fn object_result(mut v: Value) -> Value {
+    loop {
+        let s = serde_json::to_string(&v).unwrap_or_else(|_| "{}".into());
+        if s.chars().count() <= 24_000 {
+            return json!({"content": [{"type": "text", "text": s}], "isError": false});
+        }
+        let mut dropped = false;
+        if let Some(turns) = v.get_mut("turns").and_then(Value::as_array_mut) {
+            if !turns.is_empty() {
+                turns.remove(0);
+                dropped = true;
+            }
+        }
+        if dropped {
+            let n = v
+                .get("omitted_leading")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            v["omitted_leading"] = json!(n + 1);
+        } else {
+            return text_result(s, false);
+        }
+    }
+}
+
+/// Neutralize the free-text fields of a session_window / turn object before it
+/// reaches a consuming agent: title, project (home-redacted), and every turn's
+/// text get the fence/tag/control neutralizer, so a sibling session's content
+/// can't forge MCP framing. Structured fields (id, tool, roles, flags) are left
+/// as is.
+fn neutralize_window(v: &mut Value) {
+    let Some(obj) = v.as_object_mut() else {
+        return;
+    };
+    if let Some(s) = obj.get("title").and_then(Value::as_str) {
+        obj.insert("title".into(), json!(crate::commands::neutralize_field(s)));
+    }
+    if let Some(p) = obj.get("project").and_then(Value::as_str) {
+        obj.insert("project".into(), json!(safe_project(p)));
+    }
+    // Single-turn drill-down carries `text` at the top level.
+    if let Some(t) = obj.get("text").and_then(Value::as_str) {
+        obj.insert("text".into(), json!(safe_text(t)));
+    }
+    if let Some(turns) = obj.get_mut("turns").and_then(Value::as_array_mut) {
+        for turn in turns.iter_mut() {
+            if let Some(t) = turn.get("text").and_then(Value::as_str) {
+                turn["text"] = json!(safe_text(t));
+            }
+        }
     }
 }
 
@@ -406,16 +465,20 @@ fn tool_recent(conn: &mut Option<Connection>, args: &Value) -> Value {
     }
 }
 
-/// A bounded, agent-consumable window of ONE session: the real turns (not a
-/// lossy summary), tool outputs folded to head+tail, capped to the recent tail
-/// by a token budget. Reads the session file directly (0-delay), so a
-/// still-running sibling session's latest turns show without waiting for a sync.
+/// A bounded, agent-consumable window of ONE session as versioned JSON (schema
+/// `sessionwiki.window/1`): the real turns (not a lossy summary) with role
+/// labels, tool outputs folded to head+tail, capped to the recent tail by a
+/// token budget. Reads the session file directly (0-delay), so a still-running
+/// sibling session's latest turns show without waiting for a sync. With `turn`
+/// set, returns that one turn's full untruncated text (schema
+/// `sessionwiki.turn/1`) - the per-turn drill-down.
 fn tool_window(conn: &mut Option<Connection>, args: &Value) -> Value {
     let id = args.get("id").and_then(Value::as_str).unwrap_or("").trim();
     if id.is_empty() {
         return text_result("id is required".into(), true);
     }
     let budget_tokens = clamp_arg(args, "budget_tokens", 1500, 200, 8000) as usize;
+    let turn = args.get("turn").and_then(Value::as_i64);
     let Some(conn) = get_conn(conn) else {
         return text_result("no index yet - run `sessionwiki sync` once".into(), true);
     };
@@ -462,14 +525,32 @@ fn tool_window(conn: &mut Option<Connection>, args: &Value) -> Value {
         Ok(s) => s,
         Err(e) => return text_result(format!("read failed: {}", safe_text(&e.to_string())), true),
     };
+    // Per-turn drill-down: return one turn's full, untruncated text.
+    if let Some(t) = turn {
+        if t < 0 {
+            return text_result("turn must be >= 0".into(), true);
+        }
+        return match crate::window::render_turn_json(&session, t as usize) {
+            Some(mut v) => {
+                neutralize_window(&mut v);
+                object_result(v)
+            }
+            None => text_result(
+                format!(
+                    "turn {t} out of range (session has {} turns)",
+                    session.messages.len()
+                ),
+                true,
+            ),
+        };
+    }
     let opts = crate::window::WindowOpts {
         budget_chars: Some(budget_tokens.saturating_mul(4)),
         ..Default::default()
     };
-    text_result(
-        safe_text(&crate::window::render_window(&session, &opts)),
-        false,
-    )
+    let mut v = crate::window::render_window_json(&session, &opts);
+    neutralize_window(&mut v);
+    object_result(v)
 }
 
 fn tool_search(conn: &mut Option<Connection>, args: &Value) -> Value {
@@ -486,6 +567,11 @@ fn tool_search(conn: &mut Option<Connection>, args: &Value) -> Value {
     let limit = clamp_arg(args, "limit", 10, 1, 50) as usize;
     let tool = args.get("tool").and_then(Value::as_str);
     let project = args.get("project").and_then(Value::as_str);
+    // Freshness without blocking (same as recent_sessions): serve from the
+    // current index immediately and freshen in the background, so a just-created
+    // sibling session shows on a subsequent search without the request ever
+    // waiting on the store walk.
+    spawn_background_freshen();
     let Some(conn) = get_conn(conn) else {
         return text_result("[]".into(), false); // no index yet: empty, honest
     };
