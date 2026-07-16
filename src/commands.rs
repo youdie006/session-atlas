@@ -422,7 +422,7 @@ pub fn recall(
         "{}",
         dim(&format!(
             "recalled {} - {}",
-            &session.id,
+            session.id,
             truncate(&session.title, 60)
         ))
     );
