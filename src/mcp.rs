@@ -356,10 +356,43 @@ fn tool_related(conn: &mut Option<Connection>, args: &Value) -> Value {
 /// Discovery: the most RECENT sessions across every tool - "who is around" so a
 /// live agent can find sibling sessions. Bounded to a recent window by default
 /// (never a full-history scan); pass `exclude_id` to drop your own session.
+/// At most one background freshen runs at a time.
+static FRESHENING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Kick a BOUNDED freshness sync (last 15 min) in the background so a
+/// just-started sibling shows on a subsequent `recent_sessions` call, without
+/// ever blocking this one - walking the 46GB-codex tree can take tens of
+/// seconds, which must not be on the request path. At most one runs; skipped
+/// under the test hook.
+fn spawn_background_freshen() {
+    use std::sync::atomic::Ordering;
+    if std::env::var_os("SESSIONWIKI_TEST_NO_SYNC").is_some() {
+        return;
+    }
+    if FRESHENING.swap(true, Ordering::SeqCst) {
+        return; // one is already running
+    }
+    std::thread::spawn(|| {
+        if let Ok(mut w) = crate::index::open() {
+            let since = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64 - 900)
+                .ok();
+            let _ = crate::index::sync_bounded(&mut w, None, since);
+        }
+        FRESHENING.store(false, Ordering::SeqCst);
+    });
+}
+
 fn tool_recent(conn: &mut Option<Connection>, args: &Value) -> Value {
     let limit = clamp_arg(args, "limit", 10, 1, 30) as usize;
     let tool = args.get("tool").and_then(Value::as_str);
     let exclude = args.get("exclude_id").and_then(Value::as_str);
+    // Freshness without blocking: return the current index immediately (fast),
+    // and freshen in the background so the NEXT "who's around" call catches a
+    // sibling that just started. A blocking on-demand sync can't be sub-second on
+    // a large corpus (the directory walk, not the parse, dominates).
+    spawn_background_freshen();
     let Some(conn) = get_conn(conn) else {
         return text_result("[]".into(), false);
     };

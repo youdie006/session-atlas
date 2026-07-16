@@ -577,6 +577,20 @@ fn report_indexed(tool: &str, total: usize, failed: usize) {
 }
 
 pub fn sync(conn: &mut Connection, only_tool: Option<&str>) -> Result<()> {
+    sync_bounded(conn, only_tool, None)
+}
+
+/// Like [`sync`], but when `since` is set, only files/sessions modified at or
+/// after that epoch-second are (re)parsed - a bounded FRESHNESS top-up for the
+/// MCP path, so `recent_sessions` picks up a just-started sibling without paying
+/// the full-corpus re-parse (the 46GB-codex trap). Deletion reconciliation still
+/// sees every file, so a bounded run never archives a live session; older
+/// changed files are simply left for the next full `sync`.
+pub fn sync_bounded(
+    conn: &mut Connection,
+    only_tool: Option<&str>,
+    since: Option<i64>,
+) -> Result<()> {
     let adapters: Vec<Box<dyn Adapter>> = match only_tool {
         Some(t) => adapters::by_name(t).into_iter().collect(),
         None => adapters::all(),
@@ -613,7 +627,7 @@ pub fn sync(conn: &mut Connection, only_tool: Option<&str>) -> Result<()> {
             let mut seen: Vec<String> = Vec::with_capacity(store.keys.len());
             let mut pending: Vec<String> = Vec::new();
             for (key, token) in &store.keys {
-                if known.get(key) != Some(&(*token, 0)) {
+                if known.get(key) != Some(&(*token, 0)) && since.is_none_or(|s| *token >= s) {
                     pending.push(key.clone());
                 }
                 seen.push(key.clone());
@@ -679,7 +693,7 @@ pub fn sync(conn: &mut Connection, only_tool: Option<&str>) -> Result<()> {
                 .unwrap_or(0);
             let size = meta.len() as i64;
             let key = f.to_string_lossy().into_owned();
-            if known.get(&key) != Some(&(mtime, size)) {
+            if known.get(&key) != Some(&(mtime, size)) && since.is_none_or(|s| mtime >= s) {
                 pending.push((f, mtime, size));
             }
             seen.push(key);
