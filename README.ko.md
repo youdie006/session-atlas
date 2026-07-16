@@ -102,9 +102,11 @@ Claude Code에 프로젝트의 장기 기억을 더합니다: SessionStart 훅�
 
 ### MCP 서버 (모든 에이전트)
 
-툴을 가로지르는 세션 히스토리를 MCP 클라이언트가 호출할 수 있는 도구로 노출합니다
-&mdash; `search_sessions`, `trace_file`, `get_session_brief`. 전부 읽기 전용이고
-100% 로컬(stdio, 소켓 없음)입니다.
+툴을 가로지르는 세션 히스토리를 MCP 클라이언트가 호출할 수 있는 도구로 노출합니다.
+전부 읽기 전용이고 100% 로컬(stdio, 소켓 없음)입니다:
+
+- **`search_sessions`**, **`trace_file`**, **`get_session_brief`** &mdash; 세션을 찾고 브리핑으로 읽습니다.
+- **`recent_sessions`**, **`related_sessions`**, **`session_window`** &mdash; 한 에이전트가 다른 세션이 뭘 하는지 읽는 방법: 누가 있는지 나열하고, 관련 세션을 찾은 뒤, 최근 대화를 경계 있는 버전 JSON 윈도우로(턴별 드릴다운 포함) 가져옵니다.
 
 ```console
 claude mcp add sessionwiki -- sessionwiki mcp
