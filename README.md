@@ -6,8 +6,9 @@
 </picture>
 
 <a href="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml"><img src="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://crates.io/crates/sessionwiki"><img src="https://img.shields.io/crates/v/sessionwiki?logo=rust&color=3b5bd6" alt="crates.io"></a>
+<a href="https://github.com/youdie006/sessionwiki/releases/latest"><img src="https://img.shields.io/github/v/release/youdie006/sessionwiki?color=3b5bd6&label=release" alt="Latest release"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
-<a href="https://github.com/youdie006/sessionwiki/releases"><img src="docs/release-badge.png" height="20" alt="Latest release v0.17.0"></a>
 
 <b>English</b> &middot; <a href="README.ko.md">한국어</a>
 
@@ -23,9 +24,7 @@
 
 </div>
 
-That conversation where Claude fixed your CORS bug three weeks ago? It is still on your disk &mdash; you just can't find it. Every AI coding agent writes its sessions to disk: each tool in its own format, in its own folder, on every machine you use. After a few months that is thousands of conversations full of solved problems, and no way to get back to any of them.
-
-**sessionwiki reads the traces your tools already leave and turns them into one searchable, linkable archive you can actually maintain.** No daemon, no logging habit to build, no cloud. It indexes what is already there, then lets you tag it, link it, and pick up where you left off.
+**sessionwiki reads the traces your AI coding tools already leave on disk and turns them into one searchable, linkable archive you can actually get back into.** No daemon, no cloud, no logging habit to build &mdash; it indexes every tool at once, then lets you tag it, link it, and pick up where you left off.
 
 ```console
 $ sessionwiki scan
@@ -37,16 +36,16 @@ gemini                50     1.2 MB  2026-04-02   2026-06-10    ~/.gemini/tmp
 4153 sessions across 3 tools, 47.0 GB on disk.
 ```
 
-That is one real machine. Run it on yours &mdash; the number is usually a surprise.
+That is one real machine. Run it on yours &mdash; the number is usually a surprise. That conversation where Claude fixed your CORS bug three weeks ago is still on your disk, you just can't find it: each tool writes its sessions in its own format and folder, on every machine you use, and after a few months that is thousands of solved problems with no way back to any of them.
 
 ## What you can do with it
 
 - **Search** every message of every tool at once &mdash; substring + CJK, zero setup.
-- **Read & resume** &mdash; any session as a clean transcript; reopen it in its original tool, or `brief` it into another (even a different tool).
-- **Trace** a file back to the AI conversations that wrote it, across every tool &mdash; the link between your sessions and your code. See [provenance](#trace-code-back-to-its-session).
-- **Blame** a line back to the AI session behind it &mdash; `git blame` for the AI era, joining git history with the index so `blame src/auth.rs` names the conversation behind each line. Best-effort and heuristic, not proof of authorship; falls back to file-level `trace`.
-- **Keep & reclaim** &mdash; sessions are [archived](#nothing-gets-lost-archive-mode) when a tool deletes them, so search never goes dark; delete the bulky originals to reclaim disk and still search them.
-- **Curate** &mdash; tag, note, and jump to [related](#session-engineering) sessions, and see where your agent time goes.
+- **Read & resume** any session &mdash; reopen it in its original tool, or `brief` it into another.
+- **[Trace](#trace-code-back-to-its-session)** a file back to the conversations that wrote it &mdash; the link between your sessions and your code, across every tool.
+- **Blame** a line back to the session behind it &mdash; `git blame` for the AI era; best-effort, falls back to file-level `trace`.
+- **[Keep & reclaim](#nothing-gets-lost-archive-mode)** &mdash; sessions are archived when a tool deletes them, so search never goes dark; delete the bulky originals and still search them.
+- **Curate** &mdash; tag, note, jump to [related](#session-engineering) sessions, and see where your agent time goes.
 
 And a web UI when you would rather read than grep &mdash; `sessionwiki web`:
 
@@ -139,13 +138,13 @@ GB). After that, updates are incremental and take seconds.
 | `scan` | Discover session stores on this machine. Pure filesystem walk, instant. |
 | `list` | Recent sessions across all tools in one timeline. `--tool codex`, `--project api`, `--tag spike`, `-n 50`, `--all` (include subagent transcripts). |
 | `search <query>` | Full-text search over every message of every tool. Minimum 3 characters. |
-| `recall <query>` | One shot: search, list the candidate matches, and brief the top one &mdash; the search &rarr; pick id &rarr; brief loop in a single command. `--tool`, `--project`, `-n`, `--max-chars`, `--json` (for agents). The fastest way back into a past session. |
+| `recall <query>` | Search, list the matches, and brief the top one in a single command &mdash; the fastest way back into a past session. `--tool`, `--project`, `-n`, `--json` (for agents). |
 | `show <id>` | One session as a readable transcript. `--full` expands tool calls, `--json` emits the parsed session, `--outline` prints a digest: every question you asked plus how it ended. |
-| `summarize [id]` | Generate 1&ndash;2 sentence synopses with **your own LLM CLI** (`claude -p` by default, `--cmd` / `SESSIONWIKI_SUMMARIZER` to change) and cache them in the index. Without an id, batches over the `--recent N` newest sessions. Summaries survive reindexing and show up in `show`, `--outline`, and the web sidebar. |
+| `summarize [id]` | 1&ndash;2 sentence synopses via **your own LLM CLI** (`claude -p` default; `--cmd` / `SESSIONWIKI_SUMMARIZER` to change), cached in the index and shown in `show`, `--outline`, and the web sidebar. Without an id, batches the `--recent N` newest. |
 | `resume <id>` | Reopen the session in its original tool: `claude --resume` / `codex resume`, run in the right project directory. Subagent transcripts resume their parent. `--print` to just show the command. |
-| `migrate <id> <dir>` | Make a session resumable from a different project directory. Claude Code scopes resume to the project folder, so the transcript is copied into `<dir>`'s store; Codex resumes by id from anywhere (nothing to copy); Gemini copies the chat into the target project. The original is never touched. |
+| `migrate <id> <dir>` | Make a session resumable from a different project directory: Claude Code copies the transcript into `<dir>`'s store, Codex resumes by id from anywhere, Gemini copies the chat over. The original is never touched. |
 | `brief <id>` | Emit the session as a markdown briefing (head and tail, middle omitted) to carry context into any tool &mdash; including across tools. `--max-chars`, `--tools`. |
-| `web` | Local viewer on `127.0.0.1:7575`: day-grouped sessions with synopsis previews, live search with highlighted snippets, rendered transcripts with outlines, tags, and "see also" related sessions, resume commands, light and dark themes, UI in English, Korean, Japanese, and Chinese (auto-detected). It reads the existing index (sessions created after your last `list`/`search` show up once you refresh); `web --sync` refreshes first. Never leaves localhost. |
+| `web` | Local viewer on `127.0.0.1:7575`: day-grouped sessions, live search with highlighted snippets, rendered transcripts with outlines/tags/related, resume commands, light/dark, UI auto-localized (en/ko/ja/zh). Reads the existing index; `web --sync` refreshes first. Never leaves localhost. |
 | `sync [--tool]` | Build or refresh the index on demand. Pair with `--no-sync` (below) so queries skip the store walk. Handy from a cron to keep the index warm. |
 
 Every query command (`search`, `list`, `recall`, `show`, `brief`, `resume`, `trace`) takes `--no-sync` to query the already-built index without re-walking the stores &mdash; the fast path when something else (e.g. a cron running `sessionwiki sync`) keeps the index current.

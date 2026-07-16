@@ -6,8 +6,9 @@
 </picture>
 
 <a href="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml"><img src="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://crates.io/crates/sessionwiki"><img src="https://img.shields.io/crates/v/sessionwiki?logo=rust&color=3b5bd6" alt="crates.io"></a>
+<a href="https://github.com/youdie006/sessionwiki/releases/latest"><img src="https://img.shields.io/github/v/release/youdie006/sessionwiki?color=3b5bd6&label=release" alt="최신 릴리스"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT 라이선스"></a>
-<a href="https://github.com/youdie006/sessionwiki/releases"><img src="docs/release-badge.png" height="20" alt="최신 릴리스 v0.17.0"></a>
 
 <a href="README.md">English</a> &middot; <b>한국어</b>
 
@@ -23,9 +24,7 @@
 
 </div>
 
-3주 전에 Claude가 고쳐준 그 CORS 버그 대화, 아직 디스크에 있습니다 &mdash; 못 찾을 뿐이죠. 모든 AI 코딩 에이전트는 세션을 디스크에 기록합니다. 툴마다 다른 포맷으로, 다른 폴더에, 쓰는 머신마다 제각각. 몇 달이면 해결된 문제로 가득한 대화 수천 개가 쌓이는데, 다시 찾아갈 방법이 없습니다.
-
-**sessionwiki는 툴들이 어차피 남기는 흔적을 읽어, 실제로 관리할 수 있는 하나의 검색·연결 가능한 아카이브로 만듭니다.** 데몬도, 기록 습관도, 클라우드도 필요 없습니다. 이미 있는 것을 인덱싱한 다음, 태그를 달고, 서로 연결하고, 멈춘 곳에서 다시 이어갈 수 있게 해줍니다.
+**sessionwiki는 AI 코딩 툴들이 어차피 디스크에 남기는 흔적을 읽어, 실제로 다시 찾아갈 수 있는 하나의 검색·연결 가능한 아카이브로 만듭니다.** 데몬도, 클라우드도, 새로 들일 기록 습관도 필요 없습니다 &mdash; 모든 툴을 한 번에 인덱싱한 다음, 태그를 달고, 서로 연결하고, 멈춘 곳에서 다시 이어가게 해줍니다.
 
 ```console
 $ sessionwiki scan
@@ -37,7 +36,7 @@ gemini                50     1.2 MB  2026-04-02   2026-06-10    ~/.gemini/tmp
 4153 sessions across 3 tools, 47.0 GB on disk.
 ```
 
-실제 머신 한 대의 결과입니다. 본인 머신에서 돌려보세요 &mdash; 숫자에 보통 놀랍니다.
+실제 머신 한 대의 결과입니다. 본인 머신에서 돌려보세요 &mdash; 숫자에 보통 놀랍니다. 3주 전에 Claude가 고쳐준 그 CORS 버그 대화도 아직 디스크에 있습니다. 못 찾을 뿐이죠: 툴마다 다른 포맷으로, 다른 폴더에, 쓰는 머신마다 제각각 기록하니까요. 몇 달이면 해결된 문제로 가득한 대화 수천 개가 쌓이는데, 다시 찾아갈 방법이 없습니다.
 
 읽는 게 더 편하면 웹 UI도 있습니다 &mdash; `sessionwiki web`:
 
@@ -135,13 +134,13 @@ sessionwiki web                 # 또는 로컬 웹 UI로 전부 둘러보기
 | `scan` | 이 머신의 세션 저장소를 발견. 파일시스템만 훑으므로 즉시 끝납니다. |
 | `list` | 모든 툴의 최근 세션을 한 타임라인으로. `--tool codex`, `--project api`, `--tag spike`, `-n 50`, `--all`(서브에이전트 트랜스크립트 포함). |
 | `search <검색어>` | 모든 툴의 모든 메시지를 전문 검색. 최소 3글자. |
-| `recall <검색어>` | 한 번에: 검색하고, 후보 매치를 나열하고, 1순위를 브리핑 &mdash; 검색 &rarr; id 고르기 &rarr; brief 루프를 한 명령으로. `--tool`, `--project`, `-n`, `--max-chars`, `--json`(에이전트용). 과거 세션으로 가장 빠르게 복귀하는 길. |
+| `recall <검색어>` | 검색하고, 매치를 나열하고, 1순위를 한 명령으로 브리핑 &mdash; 과거 세션으로 가장 빠르게 복귀하는 길. `--tool`, `--project`, `-n`, `--json`(에이전트용). |
 | `show <id>` | 세션 하나를 읽기 좋은 트랜스크립트로. `--full`은 툴 호출 전체 표시, `--json`은 파싱 결과 출력, `--outline`은 다이제스트(내가 던진 질문 전부 + 어떻게 끝났는지). |
-| `summarize [id]` | **본인 LLM CLI**(기본 `claude -p`, `--cmd`/`SESSIONWIKI_SUMMARIZER`로 교체)로 1~2문장 시놉시스를 생성해 인덱스에 캐시. id 없이 실행하면 최근 `--recent N`개 일괄 처리. 요약은 재인덱싱에도 살아남고 `show`, `--outline`, 웹 사이드바에 표시됩니다. |
+| `summarize [id]` | **본인 LLM CLI**(기본 `claude -p`, `--cmd`/`SESSIONWIKI_SUMMARIZER`로 교체)로 1~2문장 시놉시스를 생성해 인덱스에 캐시하고 `show`·`--outline`·웹 사이드바에 표시. id 없이 실행하면 최근 `--recent N`개 일괄 처리. |
 | `resume <id>` | 원래 툴에서 세션 다시 열기: `claude --resume` / `codex resume`를 해당 프로젝트 디렉토리에서 실행. 서브에이전트 트랜스크립트는 부모 세션을 엽니다. `--print`는 명령만 출력. |
-| `migrate <id> <dir>` | 세션을 다른 프로젝트 디렉토리에서 resume할 수 있게 만듭니다. Claude Code는 resume이 프로젝트 폴더에 묶여 있어 트랜스크립트를 `<dir>`의 스토어로 복사; Codex는 어느 디렉토리에서나 id로 resume(복사 불필요); Gemini는 대상 프로젝트로 채팅을 복사. 원본은 건드리지 않습니다. |
+| `migrate <id> <dir>` | 세션을 다른 프로젝트 디렉토리에서 resume할 수 있게 만듭니다: Claude Code는 트랜스크립트를 `<dir>`의 스토어로 복사, Codex는 어느 디렉토리에서나 id로 resume, Gemini는 채팅을 복사. 원본은 건드리지 않습니다. |
 | `brief <id>` | 세션을 마크다운 브리핑으로 출력(긴 세션은 머리·꼬리만, 중간 생략) &mdash; 어느 툴로든, 툴을 바꿔서도 컨텍스트를 들고 갈 수 있습니다. `--max-chars`, `--tools`. |
-| `web` | `127.0.0.1:7575` 로컬 뷰어: 날짜별 세션 목록과 시놉시스 미리보기, 하이라이트 스니펫 실시간 검색, 목차·태그·"관련 세션"이 달린 트랜스크립트, resume 명령, 라이트/다크 테마, UI 언어 한국어·영어·일본어·중국어 지원. localhost 밖으로 절대 나가지 않습니다. |
+| `web` | `127.0.0.1:7575` 로컬 뷰어: 날짜별 세션 목록, 하이라이트 스니펫 실시간 검색, 목차·태그·관련 세션이 달린 트랜스크립트, resume 명령, 라이트/다크, UI 자동 현지화(ko/en/ja/zh). 기존 인덱스를 읽고 `web --sync`로 먼저 갱신. localhost 밖으로 절대 나가지 않습니다. |
 | `sync [--tool]` | 인덱스를 직접 빌드/갱신. 아래 `--no-sync`와 함께 쓰면 쿼리가 저장소 순회를 건너뜁니다. cron으로 인덱스를 미리 데워둘 때 유용. |
 
 모든 쿼리 명령(`search`, `list`, `recall`, `show`, `brief`, `resume`, `trace`)은 `--no-sync`를 받습니다 &mdash; 저장소를 다시 훑지 않고 이미 빌드된 인덱스만 조회하는 빠른 경로로, 다른 무언가(예: `sessionwiki sync`를 도는 cron)가 인덱스를 최신으로 유지할 때 씁니다.
