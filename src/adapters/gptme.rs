@@ -1,11 +1,9 @@
 use super::{ok_or_flag, parse_ts, title_from_messages, Adapter, Discovered};
 use crate::model::{Message, Role, Session};
 use crate::util::short_id;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::NaiveDateTime;
 use serde_json::Value;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -46,19 +44,15 @@ impl Adapter for Gptme {
     }
 
     fn parse(&self, path: &Path) -> Result<Session> {
-        let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-        if file.metadata().map(|m| m.len()).unwrap_or(0) > crate::util::MAX_SESSION_FILE_BYTES {
-            anyhow::bail!("{} is over the size cap; skipping", path.display());
-        }
-        let reader = BufReader::new(file);
+        // Over the byte cap: window (head+tail) instead of dropping the session.
+        let (lines, windowed) = crate::util::session_lines(path)?;
 
         let mut messages: Vec<Message> = Vec::new();
         let mut started = None;
         let mut ended = None;
 
-        for line in reader.lines() {
-            let Ok(line) = line else { continue };
-            let Ok(Value::Object(mut v)) = serde_json::from_str::<Value>(&line) else {
+        for line in &lines {
+            let Ok(Value::Object(mut v)) = serde_json::from_str::<Value>(line) else {
                 continue;
             };
 
@@ -116,7 +110,11 @@ impl Adapter for Gptme {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let title = title_from_messages(&messages);
+        let title = if windowed {
+            format!("[large] {}", title_from_messages(&messages))
+        } else {
+            title_from_messages(&messages)
+        };
 
         Ok(Session {
             id: short_id(&path.to_string_lossy()),

@@ -1,10 +1,8 @@
 use super::{dedup_paths, ok_or_flag, parse_ts, title_from_messages, Adapter, Discovered};
 use crate::model::{Message, Role, Session};
 use crate::util::{short_id, truncate};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::Value;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -45,11 +43,10 @@ impl Adapter for ClaudeCode {
     }
 
     fn parse(&self, path: &Path) -> Result<Session> {
-        let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-        if file.metadata().map(|m| m.len()).unwrap_or(0) > crate::util::MAX_SESSION_FILE_BYTES {
-            anyhow::bail!("{} is over the size cap; skipping", path.display());
-        }
-        let reader = BufReader::new(file);
+        // A session over the byte cap is WINDOWED (head+tail) rather than
+        // dropped, so the biggest sessions - the ones most worth referencing -
+        // stay searchable and partially readable.
+        let (lines, windowed) = crate::util::session_lines(path)?;
 
         let mut messages: Vec<Message> = Vec::new();
         let mut touched: Vec<String> = Vec::new();
@@ -59,9 +56,8 @@ impl Adapter for ClaudeCode {
         let mut started = None;
         let mut ended = None;
 
-        for line in reader.lines() {
-            let Ok(line) = line else { continue };
-            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+        for line in &lines {
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
                 continue;
             };
 
@@ -167,10 +163,16 @@ impl Adapter for ClaudeCode {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default()
         });
-        let title = summary
+        let base_title = summary
             .or(ai_title)
             .map(|s| truncate(&s, 80))
             .unwrap_or_else(|| title_from_messages(&messages));
+        // Flag a windowed session so search/list/window make the partial read obvious.
+        let title = if windowed {
+            format!("[large] {base_title}")
+        } else {
+            base_title
+        };
         let subagent = path.to_string_lossy().contains("/subagents/");
 
         Ok(Session {
