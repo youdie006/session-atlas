@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.20.1] - 2026-07-16
+
+### Fixed
+- **Over-cap sessions are windowed (head+tail) instead of dropped.** A session past the 256MB read cap was skipped entirely - so the biggest sessions, the ones most worth referencing across sessions, vanished from search and `session_window`. They are now indexed from the first 256KB + last 512KB of lines (byte-bounded, no full scan), partially readable, and flagged `[large]` in the title.
+
 ## [0.20.0] - 2026-07-15
 
 Cross-session context for agents: one agent can now see what a sibling session
