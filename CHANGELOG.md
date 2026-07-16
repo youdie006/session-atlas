@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.20.2] - 2026-07-16
+
+### Changed
+- **`recent_sessions` (MCP) freshens in the background.** It returns the current index immediately (~200ms) and kicks a bounded incremental sync, so a just-started sibling session shows on the next call - without the multi-second blocking sync a full 46GB-corpus walk would cost. New `index::sync_bounded` re-parses only files modified since a floor and never archives a live session on a bounded run.
+
 ## [0.20.1] - 2026-07-16
 
 ### Fixed
