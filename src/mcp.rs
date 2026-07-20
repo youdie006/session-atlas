@@ -331,7 +331,9 @@ fn safe_project(p: &str) -> String {
 /// Neutralize every untrusted free-text field of a serialized SessionRow before
 /// it reaches a consuming agent: title/preview/summary/account and each tag get the
 /// fence/tag/control neutralizer; project additionally gets home-dir redaction.
-/// Structured fields (id, tool, kind, started, msgs, archived) are left as is.
+/// Structured fields (id, native_id, tool, kind, started, msgs, archived) are left
+/// as is - native_id is a UUID, not free text, and the absolute path is never
+/// serialized (only that UUID).
 fn neutralize_row(v: &mut Value) {
     let Some(obj) = v.as_object_mut() else {
         return;
@@ -370,8 +372,9 @@ fn tool_call(conn: &mut Option<Connection>, params: &Value) -> Result<Value, (i6
     }
 }
 
-/// Serialize discovery rows to neutralized JSON (id + tool + title + project +
-/// a preview tail; the absolute path is never serialized), dropping any row that
+/// Serialize discovery rows to neutralized JSON (id + native_id + tool + title +
+/// project + a preview tail; the absolute path is never serialized, only its
+/// native_id UUID), dropping any row that
 /// matches `exclude` (the caller's own session id/prefix), capped to `limit`.
 fn discovery_rows(rows: &[crate::index::SessionRow], exclude: Option<&str>, limit: usize) -> Value {
     let out: Vec<Value> = rows
@@ -491,14 +494,38 @@ fn tool_window(conn: &mut Option<Connection>, args: &Value) -> Value {
             )
         }
     };
-    let row = match matches.as_slice() {
+    let session = match matches.as_slice() {
         [] => {
-            return text_result(
-                format!("no session matches id '{}'; search first", safe_text(id)),
-                true,
-            )
+            // Not indexed. A live session started moments ago (e.g. via its
+            // native rollout/transcript UUID from a harness tower) still has its
+            // file on disk: locate it by native id and read it directly, 0-delay,
+            // no sync - so it opens in one call before the index catches up.
+            match crate::index::locate_by_native_id(id) {
+                Some((tool, path)) => {
+                    match crate::adapters::by_name(&tool).map(|a| a.parse(&path)) {
+                        Some(Ok(s)) => s,
+                        _ => {
+                            return text_result(
+                                format!("no session matches id '{}'; search first", safe_text(id)),
+                                true,
+                            )
+                        }
+                    }
+                }
+                None => {
+                    return text_result(
+                        format!("no session matches id '{}'; search first", safe_text(id)),
+                        true,
+                    )
+                }
+            }
         }
-        [one] => one,
+        [one] => match crate::commands::load_session(conn, one) {
+            Ok(s) => s,
+            Err(e) => {
+                return text_result(format!("read failed: {}", safe_text(&e.to_string())), true)
+            }
+        },
         many => {
             let list: Vec<String> = many
                 .iter()
@@ -520,10 +547,6 @@ fn tool_window(conn: &mut Option<Connection>, args: &Value) -> Value {
                 true,
             );
         }
-    };
-    let session = match crate::commands::load_session(conn, row) {
-        Ok(s) => s,
-        Err(e) => return text_result(format!("read failed: {}", safe_text(&e.to_string())), true),
     };
     // Per-turn drill-down: return one turn's full, untruncated text.
     if let Some(t) = turn {
@@ -621,7 +644,8 @@ fn tool_trace(conn: &mut Option<Connection>, args: &Value) -> Value {
         Err(e) => return text_result(format!("trace failed: {}", safe_text(&e.to_string())), true),
     };
     // Drop `matched` (it can be an absolute stored path); SessionRow.path is
-    // already `#[serde(skip)]`. Every free-text field is neutralized.
+    // never serialized verbatim - only its native_id UUID. Every free-text field
+    // is neutralized.
     let rows: Vec<Value> = hits
         .iter()
         .map(|(row, _matched)| {
@@ -911,6 +935,64 @@ mod tests {
         let _c = seed("sessionwiki-test-mcp-brief-miss");
         let (v, _t) = tool("get_session_brief", json!({"id": "zzzz"}));
         assert_eq!(v["result"]["isError"], true);
+    }
+
+    /// Seed one codex session keyed by a real rollout path (its native uuid trails
+    /// the timestamp). The file is not on disk, so the window reads from the index.
+    fn seed_codex_native(dir: &str) -> Connection {
+        let path = std::env::temp_dir().join(dir);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        std::env::set_var("SESSIONWIKI_DATA", &path);
+        let conn = crate::index::open().unwrap();
+        conn.execute_batch(
+            "DELETE FROM files; DELETE FROM messages; DELETE FROM msgs; DELETE FROM touched;",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO files(path,mtime,size,session_id,tool,project,title,started,ended,msg_count,kind)
+             VALUES('/home/u/.codex/sessions/2026/06/11/rollout-2026-06-11T13-00-00-019eb9b2-1466-7e93-8b85-5b596295e96b.jsonl',
+                    0,0,'cx1','codex','/proj','rate limiter tests',
+                    '2026-06-11T13:00:00+00:00','2026-06-11T13:00:00+00:00',1,'main')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO messages(session_id,role,text) VALUES('cx1','user','property tests for the rate limiter')",
+            [],
+        ).unwrap();
+        let mid: i64 = conn
+            .query_row("SELECT id FROM messages WHERE session_id='cx1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO msgs(rowid,text) VALUES(?1,'property tests for the rate limiter')",
+            params![mid],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn window_opens_by_native_id_full_and_prefix() {
+        let _lock = LOCK.lock().unwrap();
+        let _c = seed_codex_native("sessionwiki-test-mcp-window-native");
+        let uuid = "019eb9b2-1466-7e93-8b85-5b596295e96b";
+        for id in [uuid, "019eb9b2", "019eb9b2-1466"] {
+            let (v, text) = tool("session_window", json!({"id": id}));
+            assert!(v["result"]["isError"] != true, "native id {id} not an error: {v}");
+            let obj: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(obj["id"], "cx1", "resolved to the codex session by {id}");
+            assert_eq!(obj["tool"], "codex");
+            let turns = obj["turns"].as_array().unwrap();
+            assert!(
+                turns.iter().any(|t| t["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("rate limiter")),
+                "the real turn is rendered for {id}"
+            );
+        }
     }
 
     /// Seed a hostile session whose free-text fields all carry fence/tag forgery

@@ -793,10 +793,18 @@ fn resolve_lazy(
     // prefix match at all) is worth a full store walk - an *ambiguous* prefix is
     // already in the index, so a sync cannot disambiguate it and would just pay
     // for a needless walk of every store (notably the large Codex one).
-    let matches = index::resolve(conn, id)?;
+    let mut matches = index::resolve(conn, id)?;
     if matches.is_empty() && !no_sync {
         index::sync(conn, None)?;
-        return resolve_one(conn, id);
+        matches = index::resolve(conn, id)?;
+    }
+    if matches.is_empty() {
+        // Not in the index. A live session (started moments ago) still has its
+        // file on disk; locate it by its native id so it opens in one call -
+        // even under --live / --no-sync, which deliberately skip the store walk.
+        if let Some((tool, path)) = index::locate_by_native_id(id) {
+            return Ok(index::live_row(tool, path));
+        }
     }
     pick_one(matches, id)
 }

@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [Unreleased]
+
+### Added
+
+- `session_window`/`show` now resolve a session by its native codex-rollout or
+  claude-transcript UUID (full or prefix), in addition to the sessionwiki short
+  id. Live sessions not yet indexed are found via a disk-scan fallback (no
+  sync), so a session started today opens by native id in one call.
+- `list`, `recent_sessions`, and `search` JSON now expose a `native_id` field
+  (the UUID only, never the absolute path). Closes the harness tower to
+  sessionwiki join gap.
+
 ## [0.21.0] - 2026-07-16
 
 Harden the MCP read path for in-loop agent-to-agent reads: a stable window

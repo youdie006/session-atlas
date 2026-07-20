@@ -868,14 +868,20 @@ fn archive_session(conn: &Connection, path: &str, sid: &str) -> Result<()> {
 }
 
 /// Serializes to the agent-facing JSON contract: snake_case keys matching the
-/// web API (`id`, `msgs`, tags as an array), and the absolute `path` is skipped
-/// so it never leaks into agent-consumed output.
+/// web API (`id`, `msgs`, tags as an array). The absolute `path` is never
+/// serialized verbatim - only the tool's own `native_id` (the codex rollout /
+/// claude transcript UUID extracted from the filename) is exposed, so an agent
+/// can join a harness "tower" row (which knows only the native id) back to a
+/// session without the local path ever leaking.
 #[derive(Serialize)]
 pub struct SessionRow {
     #[serde(rename = "id")]
     pub session_id: String,
     pub tool: String,
-    #[serde(skip)]
+    /// The NATIVE session file path. Never serialized as-is; it is surfaced only
+    /// as the extracted `native_id` UUID (or null when the filename carries no
+    /// UUID) via [`ser_native_id`].
+    #[serde(rename = "native_id", serialize_with = "ser_native_id")]
     pub path: String,
     pub project: String,
     pub title: String,
@@ -906,6 +912,71 @@ fn ser_tags<S: serde::Serializer>(tags: &Option<String>, s: S) -> Result<S::Ok, 
         Some(t) => s.collect_seq(t.split(',')),
         None => s.serialize_none(),
     }
+}
+
+/// Serialize a session's stored `path` as its `native_id` only: the tool's own
+/// session UUID (or null when the filename carries no UUID). The absolute path
+/// is never emitted - only the extracted UUID reaches the JSON contract.
+fn ser_native_id<S: serde::Serializer>(path: &str, s: S) -> Result<S::Ok, S::Error> {
+    match native_id_of(path) {
+        Some(id) => s.serialize_some(&id),
+        None => s.serialize_none(),
+    }
+}
+
+/// Extract the native session UUID embedded in a session file's path - the id
+/// the originating tool (and a harness "tower") knows the session by: the Codex
+/// rollout UUID (`rollout-<ts>-<uuid>.jsonl`) or the Claude Code transcript UUID
+/// (`<uuid>.jsonl`, or `agent-<uuid>.jsonl` for a subagent). Returns the first
+/// canonical 8-4-4-4-12 UUID found in the file NAME, lowercased, or None when the
+/// filename carries no UUID (tools that key sessions differently). Scanning the
+/// file name (not the whole path) keeps a codex timestamp or a parent directory
+/// from being mistaken for the session's own id.
+pub fn native_id_of(path: &str) -> Option<String> {
+    let name = std::path::Path::new(path).file_name()?.to_string_lossy();
+    find_uuid(&name)
+}
+
+/// The first canonical UUID (8-4-4-4-12 hex with dashes) appearing in `s`,
+/// lowercased. None when there is no such substring.
+fn find_uuid(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    if b.len() < 36 {
+        return None;
+    }
+    for start in 0..=b.len() - 36 {
+        if is_uuid_bytes(&b[start..start + 36]) {
+            return Some(s[start..start + 36].to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+/// Whether a 36-byte window is a canonical UUID: hex everywhere except dashes at
+/// positions 8, 13, 18, 23.
+fn is_uuid_bytes(b: &[u8]) -> bool {
+    b.len() == 36
+        && b.iter().enumerate().all(|(i, &c)| match i {
+            8 | 13 | 18 | 23 => c == b'-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
+/// Whether `q` could be a native-id lookup (full UUID or a UUID prefix), as
+/// opposed to a sessionwiki short id (always 12 hex chars, no dashes). A valid
+/// UUID prefix longer than its first 8-hex group must carry a dash (position 8
+/// is always `-`), so a plain-hex string of 9+ chars can only be a short id and
+/// never triggers the native scan - which keeps short-id resolution unchanged.
+fn looks_like_native_prefix(q: &str) -> bool {
+    let len = q.len();
+    if !(4..=36).contains(&len) {
+        return false;
+    }
+    if !q.bytes().all(|c| c.is_ascii_hexdigit() || c == b'-') {
+        return false;
+    }
+    // Plain hex, no dash: only a first-group prefix (<= 8 chars) can be a UUID.
+    q.contains('-') || len <= 8
 }
 
 /// Correlated subquery for the preview column; messages.id preserves
@@ -1221,39 +1292,161 @@ fn snippet_around(text: &str, needle: &str) -> String {
     out.replace('\n', " ")
 }
 
-/// Resolve a (possibly abbreviated) session id to its file row.
+/// Escape LIKE metacharacters ('\' first) so an id/path fragment like "%" or
+/// "_" can't turn a prefix match into a wildcard that resolves every session.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// The SELECT column list every id-resolution query shares, in the order
+/// [`map_resolve_row`] reads.
+const RESOLVE_COLS: &str = "session_id, tool, path, project, title, started, msg_count, kind";
+
+/// Map a resolve-query row to a [`SessionRow`]. Callers must SELECT
+/// [`RESOLVE_COLS`] followed by `{SUMMARY_SQL}, {TAGS_SQL}, (archived_at IS NOT NULL)`.
+fn map_resolve_row(r: &rusqlite::Row) -> rusqlite::Result<SessionRow> {
+    Ok(SessionRow {
+        session_id: r.get(0)?,
+        tool: r.get(1)?,
+        path: r.get(2)?,
+        project: r.get(3)?,
+        title: r.get(4)?,
+        started: r.get(5)?,
+        msg_count: r.get(6)?,
+        kind: r.get(7)?,
+        preview: None,
+        summary: r.get(8)?,
+        tags: r.get(9)?,
+        archived: r.get(10)?,
+        account: None,
+    })
+}
+
+/// Resolve a (possibly abbreviated) session id to its file row(s). Matches on
+/// the sessionwiki short id (prefix) AND on the tool's own native id (the codex
+/// rollout / claude transcript UUID, full or prefix), so a harness "tower" row -
+/// which knows only the native id - can be reopened directly. Short-id behavior
+/// is unchanged: the native scan only runs for native-shaped queries, and never
+/// displaces an existing short-id match on a plain-hex prefix (see
+/// [`looks_like_native_prefix`]).
 pub fn resolve(conn: &Connection, id_prefix: &str) -> Result<Vec<SessionRow>> {
+    let mut out = resolve_by_short_id(conn, id_prefix)?;
+
+    // Native-id join. A plain-hex prefix stays short-id-only when it already
+    // matched something (no new ambiguity); a dashed prefix is unambiguously a
+    // UUID (short ids have no dashes) so it always broadens to the native scan.
+    let native_ok =
+        looks_like_native_prefix(id_prefix) && (out.is_empty() || id_prefix.contains('-'));
+    if native_ok {
+        for row in resolve_by_native_id(conn, id_prefix)? {
+            if out.len() >= 10 {
+                break;
+            }
+            if out.iter().all(|r| r.session_id != row.session_id) {
+                out.push(row);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Prefix match on the sessionwiki short id (the historical `resolve`).
+fn resolve_by_short_id(conn: &Connection, id_prefix: &str) -> Result<Vec<SessionRow>> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT session_id, tool, path, project, title, started, msg_count, kind, {SUMMARY_SQL}, {TAGS_SQL}, (archived_at IS NOT NULL)
+        "SELECT {RESOLVE_COLS}, {SUMMARY_SQL}, {TAGS_SQL}, (archived_at IS NOT NULL)
          FROM files f WHERE session_id LIKE ?1 ESCAPE '\\' LIMIT 10",
     ))?;
-    // Escape LIKE metacharacters ('\' first) so an id prefix like "%" or "_"
-    // can't turn the prefix match into a wildcard that resolves every session.
-    let pattern = format!(
-        "{}%",
-        id_prefix
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_")
-    );
-    let rows = stmt.query_map(params![pattern], |r| {
-        Ok(SessionRow {
-            session_id: r.get(0)?,
-            tool: r.get(1)?,
-            path: r.get(2)?,
-            project: r.get(3)?,
-            title: r.get(4)?,
-            started: r.get(5)?,
-            msg_count: r.get(6)?,
-            kind: r.get(7)?,
-            preview: None,
-            summary: r.get(8)?,
-            tags: r.get(9)?,
-            archived: r.get(10)?,
-            account: None,
-        })
-    })?;
+    let pattern = format!("{}%", escape_like(id_prefix));
+    let rows = stmt.query_map(params![pattern], map_resolve_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Match rows whose native id (derived from the filename) starts with `prefix`.
+/// The native id is a substring of the stored path, so a coarse `path LIKE
+/// '%prefix%'` yields a bounded superset which we then confirm per row - a
+/// planted path fragment can never satisfy the exact `native_id_of` check.
+fn resolve_by_native_id(conn: &Connection, prefix: &str) -> Result<Vec<SessionRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RESOLVE_COLS}, {SUMMARY_SQL}, {TAGS_SQL}, (archived_at IS NOT NULL)
+         FROM files f WHERE path LIKE ?1 ESCAPE '\\' LIMIT 500",
+    ))?;
+    let pattern = format!("%{}%", escape_like(prefix));
+    let want = prefix.to_ascii_lowercase();
+    let rows = stmt.query_map(params![pattern], map_resolve_row)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let row = row?;
+        if native_id_of(&row.path).is_some_and(|n| n.starts_with(&want)) {
+            out.push(row);
+            if out.len() >= 10 {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Locate a session file directly on disk by its NATIVE id (codex rollout UUID
+/// or claude transcript UUID), full or prefix, WITHOUT the index. This is the
+/// live-session path: a session started moments ago may not be indexed yet, but
+/// its file already exists under the tool's store root, so `session_window` /
+/// `show` can still open it in one call. Scans only the codex and claude roots -
+/// the two tools whose native id a harness tower knows - and returns the first
+/// (tool, path) whose filename-derived native id matches. None if nothing on
+/// disk matches (or the query is not native-shaped).
+pub fn locate_by_native_id(prefix: &str) -> Option<(String, PathBuf)> {
+    if !looks_like_native_prefix(prefix) {
+        return None;
+    }
+    let want = prefix.to_ascii_lowercase();
+    for name in ["claude-code", "codex"] {
+        let Some(adapter) = adapters::by_name(name) else {
+            continue;
+        };
+        let Some(root) = adapter.root() else { continue };
+        if !root.exists() {
+            continue;
+        }
+        let hit = walkdir::WalkDir::new(&root)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .find(|e| {
+                e.file_type().is_file()
+                    && e.path().extension().is_some_and(|x| x == "jsonl")
+                    && native_id_of(&e.path().to_string_lossy())
+                        .is_some_and(|n| n.starts_with(&want))
+            });
+        if let Some(e) = hit {
+            return Some((name.to_string(), e.into_path()));
+        }
+    }
+    None
+}
+
+/// A minimal, un-indexed [`SessionRow`] for a live session located on disk by
+/// [`locate_by_native_id`]. The real path and tool drive a direct parse (via
+/// `load_session`); the metadata fields are placeholders the window/show render
+/// path does not consult (it reads the parsed transcript). The `session_id`
+/// matches the id the adapter would assign, so a later sync reconciles cleanly.
+pub fn live_row(tool: String, path: PathBuf) -> SessionRow {
+    let path = path.to_string_lossy().into_owned();
+    SessionRow {
+        session_id: crate::util::short_id(&path),
+        tool,
+        path,
+        project: String::new(),
+        title: String::new(),
+        started: None,
+        msg_count: 0,
+        kind: "main".into(),
+        preview: None,
+        summary: None,
+        tags: None,
+        archived: false,
+        account: None,
+    }
 }
 
 /// Store (or replace) the cached synopsis for a session.
@@ -1733,4 +1926,169 @@ pub fn stats(conn: &Connection) -> Result<Stats> {
         files: one("SELECT count(DISTINCT path) FROM touched")?,
         archived: one("SELECT count(*) FROM files WHERE archived_at IS NOT NULL")?,
     })
+}
+
+#[cfg(test)]
+mod native_id_tests {
+    use super::*;
+
+    // Realistic native store paths: a Codex rollout (uuid trails a timestamp) and
+    // a Claude Code transcript (uuid IS the filename), plus a subagent transcript.
+    const CODEX: &str = "/home/u/.codex/sessions/2025/05/13/rollout-2025-05-13T18-19-30-0a000000-0000-4000-8000-000000000001.jsonl";
+    const CODEX_UUID: &str = "0a000000-0000-4000-8000-000000000001";
+    const CLAUDE: &str = "/home/u/.claude/projects/-home-u-proj/1b111111-1111-4111-8111-111111111111.jsonl";
+    const CLAUDE_UUID: &str = "1b111111-1111-4111-8111-111111111111";
+    const SUBAGENT: &str = "/home/u/.claude/projects/-x/1b111111-1111-4111-8111-111111111111/subagents/agent-2c222222-2222-4222-8222-222222222222.jsonl";
+    const SUBAGENT_UUID: &str = "2c222222-2222-4222-8222-222222222222";
+
+    fn mem() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE files(
+                 path TEXT PRIMARY KEY, mtime INTEGER NOT NULL DEFAULT 0,
+                 size INTEGER NOT NULL DEFAULT 0, session_id TEXT NOT NULL,
+                 tool TEXT NOT NULL, project TEXT NOT NULL DEFAULT '',
+                 title TEXT NOT NULL DEFAULT '', started TEXT, ended TEXT,
+                 msg_count INTEGER NOT NULL DEFAULT 0,
+                 kind TEXT NOT NULL DEFAULT 'main', archived_at TEXT);
+             CREATE TABLE summaries(session_id TEXT PRIMARY KEY, summary TEXT NOT NULL, created TEXT NOT NULL);
+             CREATE TABLE tags(session_id TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY(session_id, tag));",
+        )
+        .unwrap();
+        c
+    }
+
+    /// Insert a files row and return the sessionwiki short id it was keyed by.
+    fn seed(c: &Connection, tool: &str, path: &str) -> String {
+        let sid = crate::util::short_id(path);
+        c.execute(
+            "INSERT INTO files(path, session_id, tool, msg_count) VALUES(?1,?2,?3,3)",
+            params![path, sid, tool],
+        )
+        .unwrap();
+        sid
+    }
+
+    #[test]
+    fn native_id_extracted_per_tool() {
+        assert_eq!(native_id_of(CODEX).as_deref(), Some(CODEX_UUID));
+        assert_eq!(native_id_of(CLAUDE).as_deref(), Some(CLAUDE_UUID));
+        // A subagent transcript resolves to its OWN uuid (scanned from the file
+        // name), not the parent uuid in the directory above it.
+        assert_eq!(native_id_of(SUBAGENT).as_deref(), Some(SUBAGENT_UUID));
+        // Files with no uuid in the name have no native id (not every tool keys
+        // sessions this way).
+        assert_eq!(native_id_of("/x/opencode.db#session-42"), None);
+    }
+
+    #[test]
+    fn native_id_uppercase_is_normalized_to_lowercase() {
+        let p = "/a/b/AB000000-0000-4000-8000-0000000000FF.jsonl";
+        assert_eq!(
+            native_id_of(p).as_deref(),
+            Some("ab000000-0000-4000-8000-0000000000ff")
+        );
+    }
+
+    #[test]
+    fn resolve_by_full_native_id() {
+        let c = mem();
+        let sid = seed(&c, "codex", CODEX);
+        let hits = resolve(&c, CODEX_UUID).unwrap();
+        assert_eq!(hits.len(), 1, "full native uuid resolves");
+        assert_eq!(hits[0].session_id, sid);
+    }
+
+    #[test]
+    fn resolve_by_native_prefix_hex_and_dashed() {
+        let c = mem();
+        let sid = seed(&c, "claude-code", CLAUDE);
+        // First-group (8 hex) prefix.
+        let a = resolve(&c, "1b111111").unwrap();
+        assert_eq!(a.len(), 1, "8-hex native prefix resolves");
+        assert_eq!(a[0].session_id, sid);
+        // Dashed prefix past the first group.
+        let b = resolve(&c, "1b111111-1111").unwrap();
+        assert_eq!(b.len(), 1, "dashed native prefix resolves");
+        assert_eq!(b[0].session_id, sid);
+    }
+
+    #[test]
+    fn resolve_still_matches_short_id_unchanged() {
+        let c = mem();
+        let sid = seed(&c, "codex", CODEX);
+        // Full short id and a short-id prefix both resolve (existing behavior).
+        assert_eq!(resolve(&c, &sid).unwrap().len(), 1);
+        assert_eq!(resolve(&c, &sid[..6]).unwrap()[0].session_id, sid);
+    }
+
+    #[test]
+    fn short_id_lookup_does_not_run_the_native_scan() {
+        // A 12-hex, dash-free string is short-id-shaped and must never trigger a
+        // native scan (which would be a needless path scan and could add a
+        // spurious collision). Guard the gate that governs it directly.
+        assert!(!looks_like_native_prefix("abcdef012345"));
+        // ... while genuine native shapes do pass.
+        assert!(looks_like_native_prefix("0a000000"));
+        assert!(looks_like_native_prefix("0a000000-0000-4000-8000-000000000001"));
+        assert!(looks_like_native_prefix("0a000000-0000"));
+        // Non-hex, too short, or empty never look native.
+        assert!(!looks_like_native_prefix("zzz"));
+        assert!(!looks_like_native_prefix("a1"));
+        assert!(!looks_like_native_prefix(""));
+    }
+
+    #[test]
+    fn native_prefix_never_hides_an_existing_short_id_match() {
+        // A plain-hex prefix that already matched a short id stays short-id-only:
+        // even if some other session's native uuid also starts with those hex
+        // digits, the plain-hex query keeps the established (short-id) result.
+        let c = mem();
+        // Seed a session whose SHORT id begins with the same 8 hex as another
+        // session's native uuid, and the native one too.
+        let native_path =
+            "/home/u/.codex/sessions/2025/01/01/rollout-2025-01-01T00-00-00-deadbeef-0000-4000-8000-000000000009.jsonl";
+        seed(&c, "codex", native_path);
+        // Force a files row whose short id we control to start with "deadbeef".
+        c.execute(
+            "INSERT INTO files(path, session_id, tool, msg_count) VALUES('/synthetic', 'deadbeef1234', 'codex', 1)",
+            [],
+        )
+        .unwrap();
+        let hits = resolve(&c, "deadbeef").unwrap();
+        // Short id matched, so the query stays short-id-only: exactly the one row.
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "deadbeef1234");
+    }
+
+    #[test]
+    fn session_row_serializes_native_id_not_path() {
+        let row = SessionRow {
+            session_id: "abc123def456".into(),
+            tool: "codex".into(),
+            path: CODEX.into(),
+            project: "proj".into(),
+            title: "t".into(),
+            started: None,
+            msg_count: 3,
+            kind: "main".into(),
+            preview: None,
+            summary: None,
+            tags: None,
+            archived: false,
+            account: None,
+        };
+        let v = serde_json::to_value(&row).unwrap();
+        assert_eq!(v["id"], "abc123def456");
+        assert_eq!(v["native_id"], CODEX_UUID, "native_id present in JSON");
+        assert!(
+            v.get("path").is_none(),
+            "the absolute path is never serialized"
+        );
+        // A pathless/uuid-less session serializes native_id as null, never a guess.
+        let mut row2 = row;
+        row2.path = "/x/opencode.db#s1".into();
+        let v2 = serde_json::to_value(&row2).unwrap();
+        assert!(v2["native_id"].is_null());
+    }
 }

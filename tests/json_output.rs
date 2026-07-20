@@ -79,13 +79,20 @@ fn session_row_json_has_pinned_fields() {
     assert_eq!(
         keys,
         [
-            "account", "archived", "id", "kind", "msgs", "preview", "project", "started",
-            "summary", "tags", "title", "tool"
+            "account", "archived", "id", "kind", "msgs", "native_id", "preview", "project",
+            "started", "summary", "tags", "title", "tool"
         ]
     );
     assert!(
         !obj.contains_key("path"),
         "absolute path must not leak into JSON"
+    );
+    // The native id (codex rollout / claude transcript UUID) is exposed for the
+    // tower-row join; here the seeded filename carries no UUID, so it is null -
+    // a missing badge, never a guess. The full path is still never serialized.
+    assert!(
+        obj.contains_key("native_id") && obj["native_id"].is_null(),
+        "native_id present, null when the filename has no UUID"
     );
     assert!(!obj.contains_key("session_id"), "renamed to id");
     assert!(!obj.contains_key("msg_count"), "renamed to msgs");
@@ -97,6 +104,25 @@ fn session_row_json_has_pinned_fields() {
     assert_eq!(obj["archived"], false);
     assert_eq!(obj["tags"], serde_json::json!(["auth"])); // array, not "auth"
     assert!(obj["preview"].as_str().unwrap().contains("done fixing"));
+}
+
+#[test]
+fn native_id_surfaces_in_list_json_for_a_rollout_path() {
+    let _g = LOCK.lock().unwrap();
+    let conn = fresh();
+    // A real Codex rollout path: the native uuid trails the timestamp.
+    let path = "/home/u/.codex/sessions/2025/05/13/rollout-2025-05-13T18-19-30-0a000000-0000-4000-8000-000000000001.jsonl";
+    conn.execute(
+        "INSERT INTO files
+         (path, mtime, size, session_id, tool, project, title, started, ended, msg_count, kind)
+         VALUES (?1,0,0,'sx','codex','/proj','t','2026-06-10T10:00:00+00:00','2026-06-10T10:00:00+00:00',1,'main')",
+        params![path],
+    )
+    .unwrap();
+    let rows = index::recent(&conn, 10, None, None, None, false).unwrap();
+    let v = serde_json::to_value(&rows[0]).unwrap();
+    assert_eq!(v["native_id"], "0a000000-0000-4000-8000-000000000001");
+    assert!(v.get("path").is_none(), "path itself never serialized");
 }
 
 #[test]
