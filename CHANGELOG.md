@@ -6,6 +6,11 @@ semantic versioning once it reaches 1.0.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-20
+
+Open any live session by its native id (codex-rollout or claude-transcript
+UUID), closing the harness tower to sessionwiki join gap.
+
 ### Added
 
 - `session_window`/`show` now resolve a session by its native codex-rollout or
