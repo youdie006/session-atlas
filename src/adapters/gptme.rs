@@ -127,6 +127,7 @@ impl Adapter for Gptme {
             subagent: false,
             messages,
             touched: Vec::new(),
+            edits: Vec::new(),
         })
     }
 }

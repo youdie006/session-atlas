@@ -198,6 +198,7 @@ impl Adapter for Codex {
             subagent: false,
             messages,
             touched: dedup_paths(touched),
+            edits: Vec::new(),
         })
     }
 }

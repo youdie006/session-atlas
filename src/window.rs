@@ -323,6 +323,7 @@ mod tests {
             subagent: false,
             messages,
             touched: vec![],
+            edits: Vec::new(),
         }
     }
 

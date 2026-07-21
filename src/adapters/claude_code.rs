@@ -50,6 +50,7 @@ impl Adapter for ClaudeCode {
 
         let mut messages: Vec<Message> = Vec::new();
         let mut touched: Vec<String> = Vec::new();
+        let mut edits: Vec<crate::model::EditEvent> = Vec::new();
         let mut cwd: Option<String> = None;
         let mut summary: Option<String> = None;
         let mut ai_title: Option<String> = None;
@@ -140,8 +141,9 @@ impl Adapter for ClaudeCode {
                             }
                             Some("tool_use") => {
                                 let name = b.get("name").and_then(Value::as_str).unwrap_or("?");
-                                if let Some(p) = edited_path(name, b.get("input")) {
-                                    touched.push(p);
+                                if let Some(ev) = edit_event(name, b.get("input"), ts) {
+                                    touched.push(ev.path.clone());
+                                    edits.push(ev);
                                 }
                                 let input =
                                     b.get("input").map(|i| i.to_string()).unwrap_or_default();
@@ -186,6 +188,7 @@ impl Adapter for ClaudeCode {
             subagent,
             messages,
             touched: dedup_paths(touched),
+            edits,
         })
     }
 }
@@ -211,6 +214,56 @@ fn edited_path(name: &str, input: Option<&Value>) -> Option<String> {
         }
     }
     None
+}
+
+const SNIPPET_CAP: usize = 200;
+
+/// Extract the structured edit evidence from one write tool call - the richer
+/// sibling of `edited_path`: not just WHICH file, but what kind of change and a
+/// bounded snippet of it. Returns None for non-write tools.
+fn edit_event(
+    name: &str,
+    input: Option<&Value>,
+    ts: Option<chrono::DateTime<chrono::Utc>>,
+) -> Option<crate::model::EditEvent> {
+    use crate::model::{EditEvent, EditKind};
+    let path = edited_path(name, input)?;
+    let input = input?;
+    // Every name edited_path() accepts must map here, so `edits` and `touched`
+    // never diverge (a touched path with no evidence, or vice versa).
+    let kind = match name {
+        "Edit" | "str_replace_based_edit_tool" => EditKind::Edit,
+        "Write" => EditKind::Write,
+        "MultiEdit" => EditKind::MultiEdit,
+        "NotebookEdit" => EditKind::NotebookEdit,
+        _ => return None,
+    };
+    let raw = match kind {
+        // str_replace_based_edit_tool names the field new_str / file_text.
+        EditKind::Edit => str_field(input, &["new_string", "new_str", "file_text"]),
+        EditKind::Write => str_field(input, &["content"]),
+        EditKind::MultiEdit => input
+            .get("edits")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(|e| e.get("new_string").and_then(Value::as_str))
+            .unwrap_or(""),
+        EditKind::NotebookEdit => str_field(input, &["new_source"]),
+    };
+    let snippet = truncate(raw.trim(), SNIPPET_CAP);
+    Some(EditEvent {
+        path,
+        kind,
+        snippet,
+        ts,
+    })
+}
+
+/// First present string among `keys`, or "".
+fn str_field<'a>(v: &'a Value, keys: &[&str]) -> &'a str {
+    keys.iter()
+        .find_map(|k| v.get(k).and_then(Value::as_str))
+        .unwrap_or("")
 }
 
 fn push(
@@ -239,5 +292,76 @@ fn block_text(content: Option<&Value>) -> String {
             .collect::<Vec<_>>()
             .join(" "),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::EditKind;
+    use serde_json::json;
+
+    #[test]
+    fn edit_event_captures_kind_and_new_string_snippet() {
+        let input = json!({
+            "file_path": "/repo/src/auth.rs",
+            "old_string": "let x = 1;",
+            "new_string": "let x = 2; // fixed",
+        });
+        let ev = edit_event("Edit", Some(&input), None).expect("Edit yields an edit event");
+        assert_eq!(ev.path, "/repo/src/auth.rs");
+        assert_eq!(ev.kind, EditKind::Edit);
+        assert!(
+            ev.snippet.contains("let x = 2;"),
+            "snippet should show the new code, got: {:?}",
+            ev.snippet
+        );
+    }
+
+    #[test]
+    fn write_event_snippet_comes_from_content() {
+        let input = json!({ "file_path": "/repo/new.rs", "content": "fn main() {}\n" });
+        let ev = edit_event("Write", Some(&input), None).expect("Write yields an edit event");
+        assert_eq!(ev.kind, EditKind::Write);
+        assert!(ev.snippet.contains("fn main()"), "got: {:?}", ev.snippet);
+    }
+
+    #[test]
+    fn multiedit_event_snippet_comes_from_first_edit() {
+        let input = json!({
+            "file_path": "/repo/a.rs",
+            "edits": [
+                { "old_string": "a", "new_string": "alpha" },
+                { "old_string": "b", "new_string": "beta" },
+            ],
+        });
+        let ev =
+            edit_event("MultiEdit", Some(&input), None).expect("MultiEdit yields an edit event");
+        assert_eq!(ev.kind, EditKind::MultiEdit);
+        assert!(ev.snippet.contains("alpha"), "got: {:?}", ev.snippet);
+    }
+
+    #[test]
+    fn non_write_tools_are_not_edit_events() {
+        let input = json!({ "command": "ls", "description": "list" });
+        assert!(edit_event("Bash", Some(&input), None).is_none());
+        assert!(edit_event("Read", Some(&json!({ "file_path": "/x" })), None).is_none());
+    }
+
+    #[test]
+    fn parse_populates_edits_alongside_touched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sess.jsonl");
+        let line = r#"{"type":"assistant","timestamp":"2026-07-01T10:00:00Z","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/src/auth.rs","old_string":"a","new_string":"let fixed = true;"}}]}}"#;
+        std::fs::write(&path, format!("{line}\n")).unwrap();
+
+        let session = ClaudeCode.parse(&path).unwrap();
+
+        assert_eq!(session.edits.len(), 1, "one edit event extracted");
+        assert_eq!(session.edits[0].path, "/repo/src/auth.rs");
+        assert_eq!(session.edits[0].kind, EditKind::Edit);
+        assert!(session.edits[0].snippet.contains("let fixed = true;"));
+        // touched stays consistent with edits (same path).
+        assert_eq!(session.touched, vec!["/repo/src/auth.rs".to_string()]);
     }
 }

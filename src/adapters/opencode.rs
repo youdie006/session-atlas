@@ -228,6 +228,7 @@ impl Adapter for OpenCode {
             subagent: parent.is_some_and(|p| !p.is_empty()),
             messages,
             touched: dedup_paths(touched),
+            edits: Vec::new(),
         })
     }
 
@@ -417,6 +418,7 @@ fn parse_json(tool: &'static str, path: &Path) -> Result<Session> {
         subagent,
         messages,
         touched: dedup_paths(touched),
+        edits: Vec::new(),
     })
 }
 

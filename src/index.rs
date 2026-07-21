@@ -1709,6 +1709,7 @@ pub fn session_from_index(conn: &Connection, row: &SessionRow) -> Result<crate::
         subagent: row.kind == "sub",
         messages,
         touched: files_for(conn, &row.session_id)?,
+        edits: Vec::new(),
     })
 }
 
@@ -1936,7 +1937,8 @@ mod native_id_tests {
     // a Claude Code transcript (uuid IS the filename), plus a subagent transcript.
     const CODEX: &str = "/home/u/.codex/sessions/2025/05/13/rollout-2025-05-13T18-19-30-0a000000-0000-4000-8000-000000000001.jsonl";
     const CODEX_UUID: &str = "0a000000-0000-4000-8000-000000000001";
-    const CLAUDE: &str = "/home/u/.claude/projects/-home-u-proj/1b111111-1111-4111-8111-111111111111.jsonl";
+    const CLAUDE: &str =
+        "/home/u/.claude/projects/-home-u-proj/1b111111-1111-4111-8111-111111111111.jsonl";
     const CLAUDE_UUID: &str = "1b111111-1111-4111-8111-111111111111";
     const SUBAGENT: &str = "/home/u/.claude/projects/-x/1b111111-1111-4111-8111-111111111111/subagents/agent-2c222222-2222-4222-8222-222222222222.jsonl";
     const SUBAGENT_UUID: &str = "2c222222-2222-4222-8222-222222222222";
@@ -2030,7 +2032,9 @@ mod native_id_tests {
         assert!(!looks_like_native_prefix("abcdef012345"));
         // ... while genuine native shapes do pass.
         assert!(looks_like_native_prefix("0a000000"));
-        assert!(looks_like_native_prefix("0a000000-0000-4000-8000-000000000001"));
+        assert!(looks_like_native_prefix(
+            "0a000000-0000-4000-8000-000000000001"
+        ));
         assert!(looks_like_native_prefix("0a000000-0000"));
         // Non-hex, too short, or empty never look native.
         assert!(!looks_like_native_prefix("zzz"));

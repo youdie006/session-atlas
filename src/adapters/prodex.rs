@@ -258,6 +258,7 @@ impl Adapter for Prodex {
             subagent: false,
             messages,
             touched,
+            edits: Vec::new(),
         })
     }
 }

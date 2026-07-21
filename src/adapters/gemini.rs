@@ -113,6 +113,7 @@ impl Adapter for Gemini {
             // Gemini CLI chat logs do not record structured file edits, so
             // there is nothing to link to the codebase here.
             touched: Vec::new(),
+            edits: Vec::new(),
         })
     }
 }

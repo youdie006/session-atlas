@@ -210,6 +210,7 @@ fn parse_jsonl(tool: &'static str, path: &Path) -> Result<Session> {
         subagent: false,
         messages,
         touched: dedup_paths(touched),
+        edits: Vec::new(),
     })
 }
 
