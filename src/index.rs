@@ -53,7 +53,7 @@ pub fn db_path() -> Result<PathBuf> {
 /// deleted - and are versioned separately by `meta.durable_version` via forward,
 /// additive-only migrations that never drop, so they survive every upgrade. The
 /// two counters are independent and must never gate each other.
-const SCHEMA_VERSION: i64 = 6; // 6: prodex titles = the question (parse-shape change)
+const SCHEMA_VERSION: i64 = 7; // 6: prodex titles = the question (parse-shape change)
 
 /// Version of the durable schema this binary ships. The durable CREATE
 /// statements are frozen at this shape; every later durable change is a
@@ -167,90 +167,9 @@ fn run_durable_migrations(conn: &Connection, migrations: &[Migration]) -> Result
     Ok(())
 }
 
-#[cfg(test)]
-mod migration_tests {
-    use super::*;
-
-    fn mem() -> Connection {
-        let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(
-            "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-             CREATE TABLE notes(session_id TEXT PRIMARY KEY, note TEXT NOT NULL, updated TEXT NOT NULL);
-             INSERT INTO meta VALUES('durable_version','1');
-             INSERT INTO notes VALUES('s1','keep me','t');",
-        )
-        .unwrap();
-        c
-    }
-
-    #[test]
-    fn runner_applies_gated_and_is_idempotent() {
-        let c = mem();
-        let migs = [Migration {
-            version: 2,
-            step: MigrationStep::Sql("ALTER TABLE notes ADD COLUMN pinned INTEGER"),
-        }];
-        run_durable_migrations(&c, &migs).unwrap();
-        let cols: Vec<String> = c
-            .prepare("SELECT name FROM pragma_table_info('notes')")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .map(|r| r.unwrap())
-            .collect();
-        assert!(cols.contains(&"pinned".to_string()), "column added");
-        let v: String = c
-            .query_row(
-                "SELECT value FROM meta WHERE key='durable_version'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(v, "2", "version advanced");
-        let note: String = c
-            .query_row("SELECT note FROM notes WHERE session_id='s1'", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(note, "keep me", "existing durable row preserved");
-        // re-run is a clean no-op (ADD COLUMN would otherwise error duplicate column)
-        run_durable_migrations(&c, &migs).unwrap();
-    }
-}
-
-/// A read-only handle for serving processes (the MCP server): it can never
-/// create the schema, migrate, VACUUM, or write durable data. Fails if no
-/// index exists yet (unlike `open`, which creates one).
-pub fn open_readonly() -> Result<Connection> {
-    use rusqlite::OpenFlags;
-    let conn = Connection::open_with_flags(
-        db_path()?,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    )?;
-    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
-    Ok(conn)
-}
-
-pub fn open() -> Result<Connection> {
-    let conn = Connection::open(db_path()?)?;
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
-    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
-    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    let bumped = version != SCHEMA_VERSION;
-    if bumped {
-        // Drop only the derived cache. The durable tables (summaries, tags,
-        // notes, archive) are never dropped: rebuilding the index is cheap,
-        // re-running an LLM or recovering a session the tool already deleted is
-        // not. Archived sessions are rehydrated into the cache below.
-        conn.execute_batch(
-            "DROP TABLE IF EXISTS msgs;
-             DROP TABLE IF EXISTS messages;
-             DROP TABLE IF EXISTS touched;
-             DROP TABLE IF EXISTS files;",
-        )?;
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    }
+/// Create the derived cache + durable tables if absent (idempotent). Shared by
+/// `open()` and tests so both exercise the identical DDL.
+fn create_cache_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS files(
             path       TEXT PRIMARY KEY,
@@ -339,11 +258,114 @@ pub fn open() -> Result<Connection> {
         CREATE INDEX IF NOT EXISTS idx_touched_path ON touched(path);
         -- Durable key/value scratchpad. Holds `durable_version` (the durable-
         -- schema version, separate from user_version). Never dropped.
+        -- Evidence layer over `touched`: the concrete edits (kind + a bounded
+        -- snippet of the change) behind each touched path. A log - multiple rows
+        -- per (session, path) - so the whole change history of a file survives.
+        -- Derived from the sessions on sync, dropped on a schema bump like
+        -- touched. Powers `edits_for` and the file-history page.
+        CREATE TABLE IF NOT EXISTS edits(
+            session_id TEXT NOT NULL,
+            path       TEXT NOT NULL,
+            kind       TEXT NOT NULL,
+            ts         TEXT,
+            snippet    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_edits_path ON edits(path);
+        CREATE INDEX IF NOT EXISTS idx_edits_session ON edits(session_id);
         CREATE TABLE IF NOT EXISTS meta(
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );",
     )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    fn mem() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE notes(session_id TEXT PRIMARY KEY, note TEXT NOT NULL, updated TEXT NOT NULL);
+             INSERT INTO meta VALUES('durable_version','1');
+             INSERT INTO notes VALUES('s1','keep me','t');",
+        )
+        .unwrap();
+        c
+    }
+
+    #[test]
+    fn runner_applies_gated_and_is_idempotent() {
+        let c = mem();
+        let migs = [Migration {
+            version: 2,
+            step: MigrationStep::Sql("ALTER TABLE notes ADD COLUMN pinned INTEGER"),
+        }];
+        run_durable_migrations(&c, &migs).unwrap();
+        let cols: Vec<String> = c
+            .prepare("SELECT name FROM pragma_table_info('notes')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(cols.contains(&"pinned".to_string()), "column added");
+        let v: String = c
+            .query_row(
+                "SELECT value FROM meta WHERE key='durable_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(v, "2", "version advanced");
+        let note: String = c
+            .query_row("SELECT note FROM notes WHERE session_id='s1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(note, "keep me", "existing durable row preserved");
+        // re-run is a clean no-op (ADD COLUMN would otherwise error duplicate column)
+        run_durable_migrations(&c, &migs).unwrap();
+    }
+}
+
+/// A read-only handle for serving processes (the MCP server): it can never
+/// create the schema, migrate, VACUUM, or write durable data. Fails if no
+/// index exists yet (unlike `open`, which creates one).
+pub fn open_readonly() -> Result<Connection> {
+    use rusqlite::OpenFlags;
+    let conn = Connection::open_with_flags(
+        db_path()?,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+    Ok(conn)
+}
+
+pub fn open() -> Result<Connection> {
+    let conn = Connection::open(db_path()?)?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let bumped = version != SCHEMA_VERSION;
+    if bumped {
+        // Drop only the derived cache. The durable tables (summaries, tags,
+        // notes, archive) are never dropped: rebuilding the index is cheap,
+        // re-running an LLM or recovering a session the tool already deleted is
+        // not. Archived sessions are rehydrated into the cache below.
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS msgs;
+             DROP TABLE IF EXISTS messages;
+             DROP TABLE IF EXISTS touched;
+             DROP TABLE IF EXISTS files;
+             DROP TABLE IF EXISTS edits;",
+        )?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    }
+    create_cache_schema(&conn)?;
     // Durable-table versioning, independent of user_version (the cache). `meta`
     // exists from the CREATE batch above.
     let durable = read_or_init_durable_version(&conn)?;
@@ -551,6 +573,24 @@ fn index_one(
             tx.prepare_cached("INSERT OR IGNORE INTO touched(session_id, path) VALUES (?1,?2)")?;
         for p in &session.touched {
             ins_touched.execute(params![session.id, crate::util::nfc(p)])?;
+        }
+        // Evidence layer: replace this session's edit log (a re-parse may change
+        // it). A log, not a set - the same file edited twice keeps both rows.
+        tx.execute(
+            "DELETE FROM edits WHERE session_id = ?1",
+            params![session.id],
+        )?;
+        let mut ins_edit = tx.prepare_cached(
+            "INSERT INTO edits(session_id, path, kind, ts, snippet) VALUES (?1,?2,?3,?4,?5)",
+        )?;
+        for e in &session.edits {
+            ins_edit.execute(params![
+                session.id,
+                crate::util::nfc(&e.path),
+                e.kind.as_str(),
+                e.ts.map(|t| t.to_rfc3339()),
+                e.snippet,
+            ])?;
         }
     }
     // Tag sessions an oh-my-* harness drove (it wraps Claude Code / Codex /
@@ -1565,6 +1605,50 @@ pub fn files_for(conn: &Connection, session_id: &str) -> Result<Vec<String>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// One recorded edit to a file - the evidence layer behind `touched`. `matched_path`
+/// is the absolute stored path the query resolved to.
+#[derive(Debug, Serialize)]
+pub struct FileEdit {
+    pub session_id: String,
+    pub kind: String,
+    pub ts: Option<String>,
+    pub snippet: String,
+    pub matched_path: String,
+}
+
+/// The concrete edits made to a file, newest first - the evidence for "why does
+/// this file look like this". Resolves a relative path against the absolute one
+/// on disk by suffix, the same match `sessions_for_file` uses, so
+/// `edits_for("src/auth.rs")` finds `/home/me/proj/src/auth.rs`.
+pub fn edits_for(conn: &Connection, query: &str, limit: usize) -> Result<Vec<FileEdit>> {
+    let q = crate::util::nfc(query.trim().trim_start_matches("./"));
+    // Escape LIKE metacharacters so a caller-supplied `%`/`_` matches literally.
+    let esc = q
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let suffix = format!("%/{esc}");
+    let mut stmt = conn.prepare(
+        "SELECT session_id, kind, ts, snippet, path
+         FROM edits
+         WHERE path = ?1 OR path LIKE ?2 ESCAPE '\\'
+            OR (length(?1) > length(path)
+                AND substr(?1, -length(path)) = path
+                AND substr(?1, -length(path)-1, 1) = '/')
+         ORDER BY ts DESC LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![q, suffix, limit as i64], |r| {
+        Ok(FileEdit {
+            session_id: r.get(0)?,
+            kind: r.get(1)?,
+            ts: r.get(2)?,
+            snippet: r.get(3)?,
+            matched_path: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 /// Sessions that touched a file, newest first - the reverse provenance link.
 /// Matches either the exact stored path or any stored path ending in the
 /// query, so a relative `src/auth.rs` finds `/home/me/proj/src/auth.rs`. The
@@ -2094,5 +2178,102 @@ mod native_id_tests {
         row2.path = "/x/opencode.db#s1".into();
         let v2 = serde_json::to_value(&row2).unwrap();
         assert!(v2["native_id"].is_null());
+    }
+}
+
+#[cfg(test)]
+mod edits_tests {
+    use super::*;
+
+    fn conn_with_edits() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE edits(session_id TEXT NOT NULL, path TEXT NOT NULL,
+                 kind TEXT NOT NULL, ts TEXT, snippet TEXT NOT NULL);
+             CREATE INDEX idx_edits_path ON edits(path);",
+        )
+        .unwrap();
+        c
+    }
+
+    fn add(c: &Connection, sid: &str, path: &str, kind: &str, ts: &str, snip: &str) {
+        c.execute(
+            "INSERT INTO edits(session_id, path, kind, ts, snippet) VALUES(?1,?2,?3,?4,?5)",
+            params![sid, path, kind, ts, snip],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn edits_for_returns_a_files_edits_by_suffix_newest_first() {
+        let c = conn_with_edits();
+        add(
+            &c,
+            "s1",
+            "/home/me/proj/src/auth.rs",
+            "edit",
+            "2026-06-08T10:00:00Z",
+            "let a = 1;",
+        );
+        add(
+            &c,
+            "s2",
+            "/home/me/proj/src/auth.rs",
+            "write",
+            "2026-06-09T10:00:00Z",
+            "fn main() {}",
+        );
+        add(
+            &c,
+            "s3",
+            "/home/me/proj/src/other.rs",
+            "edit",
+            "2026-06-10T10:00:00Z",
+            "nope",
+        );
+
+        // A relative path finds the absolute stored path by suffix, like `trace`.
+        let hits = edits_for(&c, "src/auth.rs", 50).unwrap();
+
+        assert_eq!(hits.len(), 2, "both auth.rs edits, not other.rs");
+        assert_eq!(hits[0].kind, "write", "newest edit first");
+        assert!(hits[0].snippet.contains("fn main()"));
+        assert_eq!(hits[1].kind, "edit");
+    }
+
+    #[test]
+    fn index_one_persists_a_sessions_edits() {
+        use crate::model::{EditEvent, EditKind, Session};
+        let mut c = Connection::open_in_memory().unwrap();
+        create_cache_schema(&c).unwrap();
+
+        let session = Session {
+            id: "sx".into(),
+            tool: "claude-code",
+            path: "/store/sx.jsonl".into(),
+            project: "/proj".into(),
+            started: None,
+            ended: None,
+            title: "t".into(),
+            subagent: false,
+            messages: vec![],
+            touched: vec!["/proj/src/auth.rs".into()],
+            edits: vec![EditEvent {
+                path: "/proj/src/auth.rs".into(),
+                kind: EditKind::Write,
+                snippet: "fn main() {}".into(),
+                ts: None,
+            }],
+        };
+
+        let tx = c.transaction().unwrap();
+        index_one(&tx, &session, "/store/sx.jsonl", 0, 0).unwrap();
+        tx.commit().unwrap();
+
+        let hits = edits_for(&c, "src/auth.rs", 50).unwrap();
+        assert_eq!(hits.len(), 1, "the session's one edit was persisted");
+        assert_eq!(hits[0].session_id, "sx");
+        assert_eq!(hits[0].kind, "write");
+        assert!(hits[0].snippet.contains("fn main()"));
     }
 }

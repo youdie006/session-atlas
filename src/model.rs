@@ -38,6 +38,18 @@ pub enum EditKind {
     NotebookEdit,
 }
 
+impl EditKind {
+    /// Stable lowercase token stored in the index (matches the Serialize form).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EditKind::Edit => "edit",
+            EditKind::Write => "write",
+            EditKind::MultiEdit => "multiedit",
+            EditKind::NotebookEdit => "notebookedit",
+        }
+    }
+}
+
 /// One concrete edit a session made to one file - the evidence chain's atom.
 /// `snippet` is a bounded excerpt of the change (the resulting code, or the
 /// created content) so a later reader can see WHAT changed without re-opening
