@@ -1660,23 +1660,34 @@ pub fn edits_for(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Fil
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// A single session's edits to one exact file path, newest first. `evidence_for`
-/// fetches per session with this, so no session's edits can be starved by
-/// another's under a shared global cap.
+/// A single session's edits to a file, newest first - scoped by session so no
+/// session's edits can be starved by another's under a shared cap. Uses the SAME
+/// suffix path match as `sessions_for_file`, so a session that edited the file
+/// under more than one spelling (abs + relative) contributes ALL its edits, not
+/// just the one spelling `sessions_for_file`'s GROUP BY happened to pick.
 pub fn edits_for_session(
     conn: &Connection,
     session_id: &str,
-    path: &str,
+    query: &str,
     limit: usize,
 ) -> Result<Vec<FileEdit>> {
-    let p = crate::util::nfc(path);
+    let q = crate::util::nfc(query.trim().trim_start_matches("./"));
+    let esc = q
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let suffix = format!("%/{esc}");
     let mut stmt = conn.prepare(
         "SELECT session_id, kind, ts, snippet, path
          FROM edits
-         WHERE session_id = ?1 AND path = ?2
-         ORDER BY ts DESC, rowid DESC LIMIT ?3",
+         WHERE session_id = ?1
+           AND (path = ?2 OR path LIKE ?3 ESCAPE '\\'
+                OR (length(?2) > length(path)
+                    AND substr(?2, -length(path)) = path
+                    AND substr(?2, -length(path)-1, 1) = '/'))
+         ORDER BY ts DESC, rowid DESC LIMIT ?4",
     )?;
-    let rows = stmt.query_map(params![session_id, p, sql_limit(limit)], |r| {
+    let rows = stmt.query_map(params![session_id, q, suffix, sql_limit(limit)], |r| {
         Ok(FileEdit {
             session_id: r.get(0)?,
             kind: r.get(1)?,
@@ -1710,14 +1721,14 @@ pub struct FileHistory {
 /// appear with an empty `edits` list - the touch is still evidence.
 pub fn evidence_for(conn: &Connection, path: &str, limit: usize) -> Result<FileHistory> {
     let sessions = sessions_for_file(conn, path, limit)?;
-    // Fetch edits PER session (scoped to its exact matched path), so one session's
-    // edits are never starved by another's - and `limit == 0` does no edit query.
+    // Fetch edits PER session (scoped by session, matched by the SAME query path
+    // so every spelling counts), so one session's edits are never starved by
+    // another's - and `limit == 0` does no edit query.
     const PER_SESSION_EDIT_CAP: usize = 500;
     let sessions = sessions
         .into_iter()
-        .map(|(session, matched)| {
-            let edits =
-                edits_for_session(conn, &session.session_id, &matched, PER_SESSION_EDIT_CAP)?;
+        .map(|(session, _matched)| {
+            let edits = edits_for_session(conn, &session.session_id, path, PER_SESSION_EDIT_CAP)?;
             Ok(SessionEvidence { session, edits })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -2429,6 +2440,40 @@ mod edits_tests {
         let hits = edits_for_session(&c, "s1", "/p/a.rs", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].snippet, "s1-edit");
+    }
+
+    #[test]
+    fn edits_for_session_matches_every_spelling_of_the_path() {
+        let c = conn_with_edits();
+        // One session edited the file under two path spellings (abs + relative).
+        add(
+            &c,
+            "s1",
+            "/proj/src/auth.rs",
+            "edit",
+            "2026-01-01T00:00:00Z",
+            "abs",
+        );
+        add(
+            &c,
+            "s1",
+            "src/auth.rs",
+            "write",
+            "2026-01-02T00:00:00Z",
+            "rel",
+        );
+        add(
+            &c,
+            "s2",
+            "/other/auth.rs",
+            "edit",
+            "2026-01-03T00:00:00Z",
+            "different-file",
+        );
+        // Suffix match scoped to s1 must catch BOTH spellings - never miss edits
+        // just because sessions_for_file's GROUP BY picked the other spelling.
+        let hits = edits_for_session(&c, "s1", "src/auth.rs", 10).unwrap();
+        assert_eq!(hits.len(), 2, "all of s1's edits to the file, any spelling");
     }
 
     #[test]
