@@ -61,6 +61,7 @@ pub fn serve(port: u16, no_open: bool, sync: bool) -> Result<()> {
             "/api/sessions" => api_sessions(&conn, query),
             "/api/search" => api_search(&conn, query),
             "/api/trace" => api_trace(&conn, query),
+            "/api/file" => api_file(&conn, query),
             "/api/projects" => api_projects(&conn),
             p if p.starts_with("/api/related/") => {
                 api_related(&conn, p.trim_start_matches("/api/related/"))
@@ -230,6 +231,27 @@ fn api_trace(conn: &Connection, query: &str) -> Result<Boxed> {
             v
         })
         .collect::<Vec<_>>()))
+}
+
+/// A file's evidence chain for the file-history page: the sessions that edited
+/// it (newest first), each session row carrying its own `edits` (kind + snippet
+/// + ts) - "why does this file look like this".
+fn api_file(conn: &Connection, query: &str) -> Result<Boxed> {
+    let path = param(query, "path").unwrap_or_default();
+    if path.is_empty() {
+        return json_response(json!({ "path": "", "sessions": [] }));
+    }
+    let hist = index::evidence_for(conn, &path, 100)?;
+    let sessions: Vec<_> = hist
+        .sessions
+        .iter()
+        .map(|se| {
+            let mut v = row_json(&se.session);
+            v["edits"] = json!(se.edits);
+            v
+        })
+        .collect();
+    json_response(json!({ "path": hist.path, "sessions": sessions }))
 }
 
 fn api_session(conn: &Connection, id: &str) -> Result<Boxed> {
