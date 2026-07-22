@@ -1625,6 +1625,12 @@ pub struct FileEdit {
 /// this file look like this". Resolves a relative path against the absolute one
 /// on disk by suffix, the same match `sessions_for_file` uses, so
 /// `edits_for("src/auth.rs")` finds `/home/me/proj/src/auth.rs`.
+/// A `usize` limit clamped to a positive `i64` for SQLite: a value past i64::MAX
+/// wraps negative, which SQLite reads as "unlimited" - defeating the memory bound.
+fn sql_limit(n: usize) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
+}
+
 pub fn edits_for(conn: &Connection, query: &str, limit: usize) -> Result<Vec<FileEdit>> {
     let q = crate::util::nfc(query.trim().trim_start_matches("./"));
     // Escape LIKE metacharacters so a caller-supplied `%`/`_` matches literally.
@@ -1642,7 +1648,35 @@ pub fn edits_for(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Fil
                 AND substr(?1, -length(path)-1, 1) = '/')
          ORDER BY ts DESC, rowid DESC LIMIT ?3",
     )?;
-    let rows = stmt.query_map(params![q, suffix, limit as i64], |r| {
+    let rows = stmt.query_map(params![q, suffix, sql_limit(limit)], |r| {
+        Ok(FileEdit {
+            session_id: r.get(0)?,
+            kind: r.get(1)?,
+            ts: r.get(2)?,
+            snippet: r.get(3)?,
+            matched_path: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// A single session's edits to one exact file path, newest first. `evidence_for`
+/// fetches per session with this, so no session's edits can be starved by
+/// another's under a shared global cap.
+pub fn edits_for_session(
+    conn: &Connection,
+    session_id: &str,
+    path: &str,
+    limit: usize,
+) -> Result<Vec<FileEdit>> {
+    let p = crate::util::nfc(path);
+    let mut stmt = conn.prepare(
+        "SELECT session_id, kind, ts, snippet, path
+         FROM edits
+         WHERE session_id = ?1 AND path = ?2
+         ORDER BY ts DESC, rowid DESC LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![session_id, p, sql_limit(limit)], |r| {
         Ok(FileEdit {
             session_id: r.get(0)?,
             kind: r.get(1)?,
@@ -1675,23 +1709,18 @@ pub struct FileHistory {
 /// the file but carry no structured edits (other adapters, archived sessions)
 /// appear with an empty `edits` list - the touch is still evidence.
 pub fn evidence_for(conn: &Connection, path: &str, limit: usize) -> Result<FileHistory> {
-    use std::collections::HashMap;
     let sessions = sessions_for_file(conn, path, limit)?;
-    // Fetch the file's edits once and bucket by session. Generous cap so every
-    // returned session's edits are present; a file with more recorded edits than
-    // this truncates the oldest (rare - logged as a known bound, not silent).
-    let cap = limit.saturating_mul(64).max(1024);
-    let mut by_session: HashMap<String, Vec<FileEdit>> = HashMap::new();
-    for e in edits_for(conn, path, cap)? {
-        by_session.entry(e.session_id.clone()).or_default().push(e);
-    }
+    // Fetch edits PER session (scoped to its exact matched path), so one session's
+    // edits are never starved by another's - and `limit == 0` does no edit query.
+    const PER_SESSION_EDIT_CAP: usize = 500;
     let sessions = sessions
         .into_iter()
-        .map(|(session, _matched)| {
-            let edits = by_session.remove(&session.session_id).unwrap_or_default();
-            SessionEvidence { session, edits }
+        .map(|(session, matched)| {
+            let edits =
+                edits_for_session(conn, &session.session_id, &matched, PER_SESSION_EDIT_CAP)?;
+            Ok(SessionEvidence { session, edits })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     Ok(FileHistory {
         path: path.to_string(),
         sessions,
@@ -1725,9 +1754,9 @@ pub fn sessions_for_file(
                 AND substr(?1, -length(t.path)) = t.path
                 AND substr(?1, -length(t.path)-1, 1) = '/')
          GROUP BY f.session_id
-         ORDER BY f.started DESC LIMIT ?3"
+         ORDER BY f.started DESC, f.session_id LIMIT ?3"
     ))?;
-    let rows = stmt.query_map(params![q, suffix, limit as i64], |r| {
+    let rows = stmt.query_map(params![q, suffix, sql_limit(limit)], |r| {
         Ok((
             SessionRow {
                 session_id: r.get(0)?,
@@ -2374,6 +2403,32 @@ mod edits_tests {
         // Equal ts -> deterministic tie-break by rowid DESC (latest insert first).
         assert_eq!(hits[0].snippet, "second");
         assert_eq!(hits[1].snippet, "first");
+    }
+
+    #[test]
+    fn edits_for_session_returns_only_that_sessions_edits() {
+        let c = conn_with_edits();
+        add(
+            &c,
+            "s1",
+            "/p/a.rs",
+            "edit",
+            "2026-01-01T00:00:00Z",
+            "s1-edit",
+        );
+        add(
+            &c,
+            "s2",
+            "/p/a.rs",
+            "write",
+            "2026-02-01T00:00:00Z",
+            "s2-edit",
+        );
+        // Scoped by exact session + path, so one session's edits can never be
+        // starved by another's under a shared cap.
+        let hits = edits_for_session(&c, "s1", "/p/a.rs", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].snippet, "s1-edit");
     }
 
     #[test]
