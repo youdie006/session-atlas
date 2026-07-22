@@ -53,7 +53,7 @@ pub fn db_path() -> Result<PathBuf> {
 /// deleted - and are versioned separately by `meta.durable_version` via forward,
 /// additive-only migrations that never drop, so they survive every upgrade. The
 /// two counters are independent and must never gate each other.
-const SCHEMA_VERSION: i64 = 7; // 6: prodex titles = the question (parse-shape change)
+const SCHEMA_VERSION: i64 = 8; // 8: redact secrets at index time (rebuild scrubs old rows)
 
 /// Version of the durable schema this binary ships. The durable CREATE
 /// statements are frozen at this shape; every later durable change is a
@@ -482,7 +482,8 @@ fn rehydrate_archive(conn: &Connection) -> Result<()> {
             for (role, text) in &msgs {
                 // Re-normalize on rehydrate: pre-fix archives hold raw/NFD JSON,
                 // so this is where archived Korean sessions become NFC again.
-                let text = crate::util::nfc(text);
+                // Also redact - a pre-redaction archive holds raw secrets.
+                let text = crate::redact::redact(&crate::util::nfc(text)).into_owned();
                 ins_row.execute(params![a.session_id, role, text])?;
                 ins_fts.execute(params![conn.last_insert_rowid(), text])?;
             }
@@ -542,7 +543,7 @@ fn index_one(
             session.id,
             session.tool,
             crate::util::nfc(&session.project),
-            session.title,
+            crate::redact::redact(&session.title).as_ref(),
             session.started.map(|t| t.to_rfc3339()),
             session.ended.map(|t| t.to_rfc3339()),
             session.messages.len() as i64,
@@ -1496,12 +1497,14 @@ pub fn live_row(tool: String, path: PathBuf) -> SessionRow {
     }
 }
 
-/// Store (or replace) the cached synopsis for a session.
+/// Store (or replace) the cached synopsis for a session. The synopsis comes from
+/// the user's own LLM over the raw transcript, so it can echo a secret - redact
+/// before it lands in this durable table.
 pub fn set_summary(conn: &Connection, session_id: &str, summary: &str) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO summaries(session_id, summary, created)
          VALUES (?1, ?2, datetime('now'))",
-        params![session_id, summary],
+        params![session_id, crate::redact::redact(summary).as_ref()],
     )?;
     Ok(())
 }
@@ -2490,7 +2493,7 @@ mod edits_tests {
             project: "/p".into(),
             started: None,
             ended: None,
-            title: "t".into(),
+            title: "title with AKIAIOSFODNN7EXAMPLE in it".into(),
             subagent: false,
             messages: vec![Message {
                 role: Role::User,
@@ -2519,6 +2522,31 @@ mod edits_tests {
         let snip = edits_for(&c, "a.rs", 10).unwrap()[0].snippet.clone();
         assert!(!snip.contains("ghp_016C"), "edit secret redacted: {snip}");
         assert!(snip.contains("[redacted:github]"), "{snip}");
+        // Title is durable (copied into archives) - must be redacted too.
+        let title: String = c
+            .query_row("SELECT title FROM files WHERE session_id='sx'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(
+            !title.contains("AKIAIOSFODNN7EXAMPLE"),
+            "title secret redacted: {title}"
+        );
+        // LLM synopsis can echo a secret into the durable summaries table.
+        set_summary(
+            &c,
+            "sx",
+            "we set sk-abcdef012345678901234567890123 as the key",
+        )
+        .unwrap();
+        let sum: String = c
+            .query_row(
+                "SELECT summary FROM summaries WHERE session_id='sx'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!sum.contains("sk-abcdef"), "summary secret redacted: {sum}");
     }
 
     #[test]

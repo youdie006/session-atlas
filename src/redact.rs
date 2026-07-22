@@ -20,7 +20,9 @@ pub fn redact(s: &str) -> Cow<'_, str> {
         || s.contains("sk-")
         || s.contains("AKIA")
         || s.contains("gh")
-        || s.contains("xox");
+        || s.contains("xox")
+        || s.contains("AIza")
+        || s.contains("_live_");
     if !suspicious {
         return Cow::Borrowed(s);
     }
@@ -62,12 +64,18 @@ fn redact_pem_blocks(s: &str) -> Cow<'_, str> {
             i = hdr_end;
             continue;
         }
-        let footer = s[hdr_end..].find("PRIVATE KEY-----");
+        // The footer must be a real `-----END ...PRIVATE KEY-----`, not just the
+        // next `PRIVATE KEY-----` (which could be another BEGIN header).
+        let footer = s[hdr_end..].find("-----END").and_then(|e| {
+            s[hdr_end + e..]
+                .find("PRIVATE KEY-----")
+                .map(|k| e + k + "PRIVATE KEY-----".len())
+        });
         out.push_str(&s[i..begin]);
         out.push_str("[redacted:private-key]");
         changed = true;
         i = match footer {
-            Some(f) => hdr_end + f + "PRIVATE KEY-----".len(),
+            Some(f) => hdr_end + f,
             None => s.len(), // unterminated: redact to the end
         };
     }
@@ -97,13 +105,24 @@ fn secret_kind(t: &str) -> Option<&'static str> {
     if t.starts_with("sk-") && t.len() >= 20 {
         return Some("openai");
     }
+    if (t.starts_with("sk_live_") || t.starts_with("rk_live_")) && t.len() >= 20 {
+        return Some("stripe");
+    }
+    if t.starts_with("AIza") && t.len() >= 30 {
+        return Some("google");
+    }
+    // AWS access key IDs are EXACTLY 20 chars (AKIA + 16 upper/digit), so the
+    // exact length keeps a longer uppercase identifier from matching.
     if t.starts_with("AKIA")
-        && t.len() >= 20
+        && t.len() == 20
         && t[4..]
             .bytes()
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
     {
         return Some("aws");
+    }
+    if t.starts_with("github_pat_") && t.len() >= 40 {
+        return Some("github");
     }
     if matches!(
         &t[..t.len().min(4)],
@@ -127,11 +146,15 @@ fn flush_token(token: &mut String, out: &mut String) {
     if token.is_empty() {
         return;
     }
-    match secret_kind(token) {
+    // Trailing dots are sentence punctuation, not part of a secret (a JWT ending
+    // a sentence would otherwise split into 4 segments and be missed).
+    let core = token.trim_end_matches('.');
+    match secret_kind(core) {
         Some(kind) => {
             out.push_str("[redacted:");
             out.push_str(kind);
             out.push(']');
+            out.push_str(&token[core.len()..]); // re-emit the trailing dots
         }
         None => out.push_str(token),
     }
@@ -201,6 +224,34 @@ mod tests {
             "context kept: {out}"
         );
         assert!(out.contains("[redacted:private-key]"), "marker: {out}");
+    }
+
+    #[test]
+    fn redacts_a_jwt_with_trailing_punctuation() {
+        // A JWT ending a sentence: the trailing '.' merges into the token and
+        // used to yield 4 segments, missing the secret.
+        let s = "issued eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.abc123_def-XYZ.";
+        let out = redact(s);
+        assert!(!out.contains("eyJhbGci"), "jwt gone: {out}");
+        assert!(out.contains("[redacted:jwt]"), "marker: {out}");
+        assert!(out.trim_end().ends_with('.'), "trailing period kept: {out}");
+    }
+
+    #[test]
+    fn redacts_more_provider_tokens() {
+        for raw in [
+            "AIzaSyA1234567890abcdefghijklmnopqrstuvw",
+            "sk_live_0123456789abcdefghijklmnop",
+            "github_pat_11ABCDE0000abcdefghij_0123456789abcdefghijklmnopqrstuvwxyzABCD",
+        ] {
+            let s = format!("k={raw} z");
+            let out = redact(&s);
+            assert!(!out.contains(raw), "redacted: {out}");
+            assert!(
+                out.contains("[redacted:") && out.contains("k=") && out.contains("z"),
+                "{out}"
+            );
+        }
     }
 
     #[test]
