@@ -1,4 +1,6 @@
-use super::{dedup_paths, ok_or_flag, parse_ts, title_from_messages, Adapter, Discovered};
+use super::{
+    clean_path, dedup_paths, ok_or_flag, parse_ts, title_from_messages, Adapter, Discovered,
+};
 use crate::model::{Message, Role, Session};
 use crate::util::{short_id, truncate};
 use anyhow::Result;
@@ -227,7 +229,9 @@ fn edit_event(
     ts: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Option<crate::model::EditEvent> {
     use crate::model::{EditEvent, EditKind};
-    let path = edited_path(name, input)?;
+    // clean_path applies the SAME hygiene dedup_paths gives `touched`, so an
+    // edits row never survives for a path touched would have dropped.
+    let path = clean_path(&edited_path(name, input)?)?;
     let input = input?;
     // Every name edited_path() accepts must map here, so `edits` and `touched`
     // never diverge (a touched path with no evidence, or vice versa).
@@ -346,6 +350,27 @@ mod tests {
         let input = json!({ "command": "ls", "description": "list" });
         assert!(edit_event("Bash", Some(&input), None).is_none());
         assert!(edit_event("Read", Some(&json!({ "file_path": "/x" })), None).is_none());
+    }
+
+    #[test]
+    fn edit_event_cleans_the_path_like_touched() {
+        // Whitespace is trimmed so edits.path matches the dedup_paths-cleaned
+        // touched path (they must not diverge).
+        let ev = edit_event(
+            "Edit",
+            Some(&json!({ "file_path": "  /repo/a.rs  ", "new_string": "x" })),
+            None,
+        )
+        .expect("a trimmable path still yields an edit");
+        assert_eq!(ev.path, "/repo/a.rs");
+        // A path the touched filter rejects (embedded newline) yields no edit
+        // either - never an edits-only record touched would have dropped.
+        assert!(edit_event(
+            "Edit",
+            Some(&json!({ "file_path": "/re\npo/a.rs", "new_string": "x" })),
+            None
+        )
+        .is_none());
     }
 
     #[test]

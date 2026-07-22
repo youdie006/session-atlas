@@ -446,10 +446,7 @@ fn rehydrate_archive(conn: &Connection) -> Result<()> {
         // Idempotent: clear any existing cache rows for this session first, so
         // re-running rehydrate never duplicates messages/FTS rows.
         delete_session_msgs(conn, &a.session_id)?;
-        conn.execute(
-            "DELETE FROM touched WHERE session_id = ?1",
-            params![a.session_id],
-        )?;
+        delete_session_provenance(conn, &a.session_id)?;
         conn.execute(
             "DELETE FROM files WHERE session_id = ?1",
             params![a.session_id],
@@ -527,10 +524,7 @@ fn index_one(
     size: i64,
 ) -> Result<()> {
     delete_session_msgs(tx, &session.id)?;
-    tx.execute(
-        "DELETE FROM touched WHERE session_id = ?1",
-        params![session.id],
-    )?;
+    delete_session_provenance(tx, &session.id)?;
     // A path that was archived (the tool deleted it, now it is back) is live
     // again: this INSERT clears archived_at, and the durable copy is dropped.
     tx.execute(
@@ -574,12 +568,8 @@ fn index_one(
         for p in &session.touched {
             ins_touched.execute(params![session.id, crate::util::nfc(p)])?;
         }
-        // Evidence layer: replace this session's edit log (a re-parse may change
-        // it). A log, not a set - the same file edited twice keeps both rows.
-        tx.execute(
-            "DELETE FROM edits WHERE session_id = ?1",
-            params![session.id],
-        )?;
+        // Evidence layer (a log, not a set - the same file edited twice keeps
+        // both rows). Prior rows were cleared with `touched` above.
         let mut ins_edit = tx.prepare_cached(
             "INSERT INTO edits(session_id, path, kind, ts, snippet) VALUES (?1,?2,?3,?4,?5)",
         )?;
@@ -809,6 +799,21 @@ fn delete_session_msgs(conn: &Connection, session_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Clear a session's derived provenance - `touched` AND `edits` together - so a
+/// delete site can never remember one and forget the other (they drifted once,
+/// leaving orphaned edit rows visible through `edits_for`).
+fn delete_session_provenance(conn: &Connection, session_id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM touched WHERE session_id = ?1",
+        params![session_id],
+    )?;
+    conn.execute(
+        "DELETE FROM edits WHERE session_id = ?1",
+        params![session_id],
+    )?;
+    Ok(())
+}
+
 /// Reconcile the index with a tool's store after discovery. Sessions whose
 /// original file disappeared are **archived** (kept in the durable `archive`
 /// table and flagged in `files`, with messages/touched left in place so
@@ -864,7 +869,7 @@ fn archive_or_prune(
         if no_archive {
             conn.execute("DELETE FROM files WHERE path = ?1", params![path])?;
             delete_session_msgs(conn, &sid)?;
-            conn.execute("DELETE FROM touched WHERE session_id = ?1", params![sid])?;
+            delete_session_provenance(conn, &sid)?;
         } else {
             archive_session(conn, &path, &sid)?;
             archived += 1;
@@ -1635,7 +1640,7 @@ pub fn edits_for(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Fil
             OR (length(?1) > length(path)
                 AND substr(?1, -length(path)) = path
                 AND substr(?1, -length(path)-1, 1) = '/')
-         ORDER BY ts DESC LIMIT ?3",
+         ORDER BY ts DESC, rowid DESC LIMIT ?3",
     )?;
     let rows = stmt.query_map(params![q, suffix, limit as i64], |r| {
         Ok(FileEdit {
@@ -1805,7 +1810,15 @@ pub fn session_from_index(conn: &Connection, row: &SessionRow) -> Result<crate::
 pub fn forget(conn: &mut Connection, session_id: &str) -> Result<()> {
     let tx = conn.transaction()?;
     delete_session_msgs(&tx, session_id)?;
-    for table in ["files", "touched", "archive", "summaries", "tags", "notes"] {
+    for table in [
+        "files",
+        "touched",
+        "edits",
+        "archive",
+        "summaries",
+        "tags",
+        "notes",
+    ] {
         tx.execute(
             &format!("DELETE FROM {table} WHERE session_id = ?1"),
             params![session_id],
@@ -2275,5 +2288,47 @@ mod edits_tests {
         assert_eq!(hits[0].session_id, "sx");
         assert_eq!(hits[0].kind, "write");
         assert!(hits[0].snippet.contains("fn main()"));
+    }
+
+    #[test]
+    fn forget_removes_a_sessions_edits() {
+        let mut c = Connection::open_in_memory().unwrap();
+        create_cache_schema(&c).unwrap();
+        c.execute(
+            "INSERT INTO files(path, session_id, tool, mtime, size) VALUES('/store/s.jsonl','s1','claude-code',0,0)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO edits(session_id,path,kind,ts,snippet) VALUES('s1','/proj/a.rs','write',NULL,'x')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(edits_for(&c, "a.rs", 10).unwrap().len(), 1);
+
+        forget(&mut c, "s1").unwrap();
+
+        assert!(
+            edits_for(&c, "a.rs", 10).unwrap().is_empty(),
+            "forget must remove the session's edits, not orphan them"
+        );
+    }
+
+    #[test]
+    fn edits_for_is_deterministic_when_timestamps_tie() {
+        let c = conn_with_edits();
+        add(&c, "s1", "/p/a.rs", "edit", "2026-01-01T00:00:00Z", "first");
+        add(
+            &c,
+            "s2",
+            "/p/a.rs",
+            "write",
+            "2026-01-01T00:00:00Z",
+            "second",
+        );
+        let hits = edits_for(&c, "a.rs", 10).unwrap();
+        // Equal ts -> deterministic tie-break by rowid DESC (latest insert first).
+        assert_eq!(hits[0].snippet, "second");
+        assert_eq!(hits[1].snippet, "first");
     }
 }
