@@ -559,7 +559,9 @@ fn index_one(
         for m in &session.messages {
             // Normalize once and reuse for the plain row and the external-content
             // FTS row: they MUST be byte-identical or delete_session_msgs corrupts.
-            let text = crate::util::nfc(&m.text);
+            // Strip secrets before they enter the index (which outlives the
+            // original session via archive mode). Redact then reuse for both rows.
+            let text = crate::redact::redact(&crate::util::nfc(&m.text)).into_owned();
             ins_row.execute(params![session.id, m.role.label(), text])?;
             ins_fts.execute(params![tx.last_insert_rowid(), text])?;
         }
@@ -579,7 +581,7 @@ fn index_one(
                 crate::util::nfc(&e.path),
                 e.kind.as_str(),
                 e.ts.map(|t| t.to_rfc3339()),
-                e.snippet,
+                crate::redact::redact(&e.snippet).as_ref(),
             ])?;
         }
     }
@@ -2474,6 +2476,49 @@ mod edits_tests {
         // just because sessions_for_file's GROUP BY picked the other spelling.
         let hits = edits_for_session(&c, "s1", "src/auth.rs", 10).unwrap();
         assert_eq!(hits.len(), 2, "all of s1's edits to the file, any spelling");
+    }
+
+    #[test]
+    fn index_redacts_secrets_in_messages_and_edit_snippets() {
+        use crate::model::{EditEvent, EditKind, Message, Role, Session};
+        let mut c = Connection::open_in_memory().unwrap();
+        create_cache_schema(&c).unwrap();
+        let session = Session {
+            id: "sx".into(),
+            tool: "claude-code",
+            path: "/s.jsonl".into(),
+            project: "/p".into(),
+            started: None,
+            ended: None,
+            title: "t".into(),
+            subagent: false,
+            messages: vec![Message {
+                role: Role::User,
+                text: "my key is sk-abcdef012345678901234567890123 ok".into(),
+                ts: None,
+            }],
+            touched: vec!["/p/a.rs".into()],
+            edits: vec![EditEvent {
+                path: "/p/a.rs".into(),
+                kind: EditKind::Write,
+                snippet: "const T = \"ghp_016C7f9aBcDeFgHiJkLmNoPqRsTuVwXyZ012\";".into(),
+                ts: None,
+            }],
+        };
+        let tx = c.transaction().unwrap();
+        index_one(&tx, &session, "/s.jsonl", 0, 0).unwrap();
+        tx.commit().unwrap();
+
+        let msg: String = c
+            .query_row("SELECT text FROM messages WHERE session_id='sx'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(!msg.contains("sk-abcdef"), "message secret redacted: {msg}");
+        assert!(msg.contains("[redacted:openai]"), "{msg}");
+        let snip = edits_for(&c, "a.rs", 10).unwrap()[0].snippet.clone();
+        assert!(!snip.contains("ghp_016C"), "edit secret redacted: {snip}");
+        assert!(snip.contains("[redacted:github]"), "{snip}");
     }
 
     #[test]
