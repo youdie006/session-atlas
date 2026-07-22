@@ -59,43 +59,53 @@ pub fn index_checks(conn: &Connection, expected_schema: i64) -> Vec<Check> {
         )
     });
 
-    // A read-only-safe structural check. (PRAGMA integrity_check can't run on the
-    // read-only connection: validating the FTS5 index needs write access.)
-    const CORE: &[&str] = &["files", "messages", "edits", "archive"];
-    let present: i64 = conn
-        .query_row(
-            "SELECT count(*) FROM sqlite_master WHERE type='table'
-               AND name IN ('files','messages','edits','archive')",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
-    checks.push(if present as usize == CORE.len() {
-        Check::ok("index tables", "all core tables present".into())
+    // Real reads of each core table: a query error is a genuine problem (missing
+    // table, lock, read-corruption), never a healthy empty index - so it must not
+    // become a silent "ok, 0". (Full PRAGMA integrity_check needs write access for
+    // the FTS5 index, so it can't run on this read-only connection.)
+    const CORE: &[&str] = &["files", "messages", "edits", "archive", "summaries"];
+    let unreadable: Vec<&str> = CORE
+        .iter()
+        .copied()
+        .filter(|t| {
+            conn.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .is_err()
+        })
+        .collect();
+    checks.push(if unreadable.is_empty() {
+        Check::ok("index tables", "all core tables readable".into())
     } else {
-        Check::warn(
+        Check::fail(
             "index tables",
-            format!(
-                "{present}/{} core tables - the next query rebuilds the cache",
-                CORE.len()
-            ),
+            format!("unreadable: {}", unreadable.join(", ")),
         )
     });
 
-    let sessions: i64 = conn
-        .query_row("SELECT count(*) FROM files", [], |r| r.get(0))
-        .unwrap_or(0);
-    let archived: i64 = conn
-        .query_row(
-            "SELECT count(*) FROM files WHERE archived_at IS NOT NULL",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
-    checks.push(Check::ok(
-        "indexed sessions",
-        format!("{sessions} ({archived} kept after the tool deleted them)"),
-    ));
+    // Session counts (main sessions, matching the rest of the CLI's kind='main'
+    // convention). A count error is a Fail, not a healthy-looking 0.
+    match conn.query_row("SELECT count(*) FROM files WHERE kind='main'", [], |r| {
+        r.get::<_, i64>(0)
+    }) {
+        Ok(main) => {
+            let archived: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM files WHERE archived_at IS NOT NULL",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            checks.push(Check::ok(
+                "indexed sessions",
+                format!("{main} ({archived} kept after the tool deleted them)"),
+            ));
+        }
+        Err(e) => checks.push(Check::fail(
+            "indexed sessions",
+            format!("count failed: {e}"),
+        )),
+    }
 
     checks
 }
@@ -105,15 +115,28 @@ pub fn index_checks(conn: &Connection, expected_schema: i64) -> Vec<Check> {
 /// left off the list; the warn fires only when NONE are found.
 pub fn store_checks() -> Vec<Check> {
     let mut checks = Vec::new();
+    let mut any = false;
     for adapter in crate::adapters::all() {
-        if let Some(r) = crate::adapters::report(adapter.as_ref()) {
-            checks.push(Check::ok(
+        let Some(root) = adapter.root() else { continue };
+        if !root.exists() {
+            continue; // an absent store is normal - not every tool is installed
+        }
+        any = true;
+        // Confirm the root is readable WITHOUT a full recursive walk: a large
+        // store (a 40GB codex history) would make `doctor` crawl. A shallow
+        // read_dir still catches a permission problem.
+        match std::fs::read_dir(&root) {
+            Ok(_) => checks.push(Check::ok(
                 &format!("store: {}", adapter.name()),
-                format!("{} sessions in {}", r.files, r.root.display()),
-            ));
+                format!("present at {}", root.display()),
+            )),
+            Err(e) => checks.push(Check::warn(
+                &format!("store: {}", adapter.name()),
+                format!("present but unreadable: {e}"),
+            )),
         }
     }
-    if checks.is_empty() {
+    if !any {
         checks.push(Check::warn(
             "stores",
             "no session stores found on this machine".into(),
@@ -125,13 +148,23 @@ pub fn store_checks() -> Vec<Check> {
 /// Run every check and print the report (`--json` for scripts). Opens the index
 /// read-only so `doctor` never mutates it.
 pub fn run(json: bool) -> anyhow::Result<()> {
+    use rusqlite::OpenFlags;
     let mut checks = store_checks();
-    match crate::index::open_readonly() {
-        Ok(conn) => checks.extend(index_checks(&conn, crate::index::SCHEMA_VERSION)),
-        Err(_) => checks.push(Check::warn(
+    // existing_db_path() has NO side effects (unlike open()/open_readonly, which
+    // create the data dir and can rename legacy dirs) - so `doctor` stays truly
+    // read-only. Absent index vs an index that won't open are DIFFERENT problems.
+    match crate::index::existing_db_path() {
+        None => checks.push(Check::warn(
             "index",
             "not built yet - run `sessionwiki search` to build it".into(),
         )),
+        Some(path) => match Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(conn) => checks.extend(index_checks(&conn, crate::index::SCHEMA_VERSION)),
+            Err(e) => checks.push(Check::fail(
+                "index",
+                format!("present but cannot open ({}): {e}", path.display()),
+            )),
+        },
     }
     checks.push(Check::ok("version", env!("CARGO_PKG_VERSION").into()));
 
@@ -157,10 +190,12 @@ mod tests {
     fn conn() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(
-            "CREATE TABLE files(path TEXT PRIMARY KEY, session_id TEXT NOT NULL, archived_at TEXT);
+            "CREATE TABLE files(path TEXT PRIMARY KEY, session_id TEXT NOT NULL, archived_at TEXT,
+                 kind TEXT NOT NULL DEFAULT 'main');
              CREATE TABLE messages(id INTEGER PRIMARY KEY);
              CREATE TABLE edits(session_id TEXT);
-             CREATE TABLE archive(session_id TEXT);",
+             CREATE TABLE archive(session_id TEXT);
+             CREATE TABLE summaries(session_id TEXT);",
         )
         .unwrap();
         c
@@ -182,7 +217,7 @@ mod tests {
         let schema = checks.iter().find(|c| c.name == "index schema").unwrap();
         assert_eq!(schema.status, Status::Warn, "v7 vs expected v8 is a warn");
         let tables = checks.iter().find(|c| c.name == "index tables").unwrap();
-        assert_eq!(tables.status, Status::Ok, "all 4 core tables present");
+        assert_eq!(tables.status, Status::Ok, "all core tables readable");
         let sessions = checks
             .iter()
             .find(|c| c.name == "indexed sessions")
@@ -196,6 +231,21 @@ mod tests {
             sessions.detail.contains("1 "),
             "1 archived: {}",
             sessions.detail
+        );
+    }
+
+    #[test]
+    fn a_missing_core_table_is_a_fail_not_a_healthy_zero() {
+        let c = conn();
+        c.execute("DROP TABLE edits", []).unwrap();
+        let tables = index_checks(&c, 8)
+            .into_iter()
+            .find(|c| c.name == "index tables")
+            .unwrap();
+        assert_eq!(
+            tables.status,
+            Status::Fail,
+            "an unreadable core table must fail, not look like an empty index"
         );
     }
 

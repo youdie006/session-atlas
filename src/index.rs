@@ -46,6 +46,17 @@ pub fn db_path() -> Result<PathBuf> {
     Ok(dir.join("index.db"))
 }
 
+/// The index path IF it already exists - with none of the directory creation or
+/// legacy migration `db_path` performs. For strictly read-only callers (`doctor`)
+/// that must not mutate the filesystem just to check for the index.
+pub fn existing_db_path() -> Option<PathBuf> {
+    let dir = std::env::var_os("SESSIONWIKI_DATA")
+        .map(PathBuf::from)
+        .or_else(|| dirs::data_dir().map(|d| d.join("sessionwiki")))?;
+    let db = dir.join("index.db");
+    db.exists().then_some(db)
+}
+
 /// `user_version` versions the disposable cache: a mismatch drops and rebuilds
 /// the derived tables (files/messages/msgs/touched) instead of migrating. The
 /// durable tables (summaries, tags, notes, archive) hold what cannot be
