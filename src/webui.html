@@ -336,6 +336,20 @@
   .seealso .rel:hover { background: var(--bg-sunken); }
   .seealso .rel .t { font-size: 13px; color: var(--ink); }
   .seealso .rel .m { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+  /* The edit evidence: what each session actually changed in this file. */
+  .seealso .rel .edits { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .seealso .rel .edit { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+  .seealso .rel .editkind {
+    flex: none; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--ink-2); border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 5px; background: var(--bg-sunken);
+  }
+  .seealso .rel .editsnip {
+    flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; color: var(--ink-2); background: var(--code-bg);
+    border-radius: 4px; padding: 1px 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
 
   .outline {
     background: var(--bg-sunken);
@@ -528,6 +542,7 @@ const I18N = {
     outline: (n) => `Outline · ${n} turns`,
     seeAlso: "See also", filtering: "filtering", filterByTag: "filter by tag",
     filesLabel: "Files", tracedBy: (f) => `Sessions that touched ${f}`,
+    fileHistory: (f) => `How ${f} was written`,
     hint: "read-only view · refresh: sessionwiki list",
     themeDark: "Dark", themeLight: "Light",
     stats: (s, t, b) => `${s} sessions · ${t} tools · ${b}`,
@@ -552,6 +567,7 @@ const I18N = {
     outline: (n) => `목차 · 질문 ${n}개`,
     seeAlso: "관련 세션", filtering: "필터", filterByTag: "태그로 필터",
     filesLabel: "파일", tracedBy: (f) => `${f} 를 편집한 세션`,
+    fileHistory: (f) => `${f} 가 어떻게 쓰였나`,
     hint: "읽기 전용 · 갱신: sessionwiki list",
     themeDark: "다크", themeLight: "라이트",
     stats: (s, t, b) => `세션 ${s} · 툴 ${t} · ${b}`,
@@ -576,6 +592,7 @@ const I18N = {
     outline: (n) => `目次 · ${n}ターン`,
     seeAlso: "関連セッション", filtering: "フィルタ", filterByTag: "タグで絞り込み",
     filesLabel: "ファイル", tracedBy: (f) => `${f} を編集したセッション`,
+    fileHistory: (f) => `${f} はどう書かれたか`,
     hint: "読み取り専用 · 更新: sessionwiki list",
     themeDark: "ダーク", themeLight: "ライト",
     stats: (s, t, b) => `セッション ${s} · ツール ${t} · ${b}`,
@@ -600,6 +617,7 @@ const I18N = {
     outline: (n) => `大纲 · ${n}轮`,
     seeAlso: "相关会话", filtering: "筛选", filterByTag: "按标签筛选",
     filesLabel: "文件", tracedBy: (f) => `编辑过 ${f} 的会话`,
+    fileHistory: (f) => `${f} 是如何写成的`,
     hint: "只读视图 · 刷新: sessionwiki list",
     themeDark: "深色", themeLight: "浅色",
     stats: (s, t, b) => `${s} 个会话 · ${t} 个工具 · ${b}`,
@@ -842,7 +860,7 @@ async function openSession(id) {
       const base = p.split("/").pop() || p;
       const chip = el("span", "filechip", base);
       chip.title = p;
-      chip.onclick = () => showTrace(p, chip);
+      chip.onclick = () => showFileHistory(p, chip);
       row.appendChild(chip);
     }
     head.appendChild(row);
@@ -932,16 +950,31 @@ async function openSession(id) {
 
   // Reverse provenance: clicking a touched file lists the sessions that
   // touched it (across tools and projects) in the see-also panel.
-  function showTrace(path, chip) {
+  function showFileHistory(path, chip) {
     document.querySelectorAll(".filechip.on").forEach((c) => c.classList.remove("on"));
     chip.classList.add("on");
     const base = path.split("/").pop() || path;
-    jget("/api/trace?path=" + encodeURIComponent(path)).then((hits) => {
-      seealso.replaceChildren(el("h3", "", L.tracedBy(base)));
-      for (const r of (hits || [])) {
+    jget("/api/file?path=" + encodeURIComponent(path)).then((hist) => {
+      seealso.replaceChildren(el("h3", "", L.fileHistory(base)));
+      for (const r of ((hist && hist.sessions) || [])) {
         const a = el("div", "rel");
         a.appendChild(el("div", "t", r.title || L.untitled));
         a.appendChild(el("div", "m", `${r.tool} · ${fmtDate(r.started)} · ${L.msgs(r.msgs)}`));
+        // The evidence: what this session actually changed in the file.
+        if (r.edits && r.edits.length) {
+          const ev = el("div", "edits");
+          for (const e of r.edits) {
+            const item = el("div", "edit");
+            item.appendChild(el("span", "editkind", e.kind));
+            if (e.snippet) {
+              const snip = el("code", "editsnip", e.snippet.replace(/\s+/g, " ").trim());
+              snip.title = e.snippet;
+              item.appendChild(snip);
+            }
+            ev.appendChild(item);
+          }
+          a.appendChild(ev);
+        }
         a.onclick = () => openSession(r.id);
         seealso.appendChild(a);
       }
