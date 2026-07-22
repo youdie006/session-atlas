@@ -980,16 +980,18 @@ mod tests {
         let uuid = "019eb9b2-1466-7e93-8b85-5b596295e96b";
         for id in [uuid, "019eb9b2", "019eb9b2-1466"] {
             let (v, text) = tool("session_window", json!({"id": id}));
-            assert!(v["result"]["isError"] != true, "native id {id} not an error: {v}");
+            assert!(
+                v["result"]["isError"] != true,
+                "native id {id} not an error: {v}"
+            );
             let obj: Value = serde_json::from_str(&text).unwrap();
             assert_eq!(obj["id"], "cx1", "resolved to the codex session by {id}");
             assert_eq!(obj["tool"], "codex");
             let turns = obj["turns"].as_array().unwrap();
             assert!(
-                turns.iter().any(|t| t["text"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains("rate limiter")),
+                turns
+                    .iter()
+                    .any(|t| t["text"].as_str().unwrap_or("").contains("rate limiter")),
                 "the real turn is rendered for {id}"
             );
         }
