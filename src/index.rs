@@ -1654,6 +1654,50 @@ pub fn edits_for(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Fil
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// One session's slice of a file's history: its metadata plus the edits it made
+/// to this file.
+#[derive(Serialize)]
+pub struct SessionEvidence {
+    pub session: SessionRow,
+    pub edits: Vec<FileEdit>,
+}
+
+/// A file's full evidence chain - the sessions that edited it, newest first,
+/// each carrying its own edits. What the file-history page renders.
+#[derive(Serialize)]
+pub struct FileHistory {
+    pub path: String,
+    pub sessions: Vec<SessionEvidence>,
+}
+
+/// Assemble a file's evidence chain: the sessions that touched it (with metadata,
+/// newest first) joined to each session's recorded edits. Sessions that touched
+/// the file but carry no structured edits (other adapters, archived sessions)
+/// appear with an empty `edits` list - the touch is still evidence.
+pub fn evidence_for(conn: &Connection, path: &str, limit: usize) -> Result<FileHistory> {
+    use std::collections::HashMap;
+    let sessions = sessions_for_file(conn, path, limit)?;
+    // Fetch the file's edits once and bucket by session. Generous cap so every
+    // returned session's edits are present; a file with more recorded edits than
+    // this truncates the oldest (rare - logged as a known bound, not silent).
+    let cap = limit.saturating_mul(64).max(1024);
+    let mut by_session: HashMap<String, Vec<FileEdit>> = HashMap::new();
+    for e in edits_for(conn, path, cap)? {
+        by_session.entry(e.session_id.clone()).or_default().push(e);
+    }
+    let sessions = sessions
+        .into_iter()
+        .map(|(session, _matched)| {
+            let edits = by_session.remove(&session.session_id).unwrap_or_default();
+            SessionEvidence { session, edits }
+        })
+        .collect();
+    Ok(FileHistory {
+        path: path.to_string(),
+        sessions,
+    })
+}
+
 /// Sessions that touched a file, newest first - the reverse provenance link.
 /// Matches either the exact stored path or any stored path ending in the
 /// query, so a relative `src/auth.rs` finds `/home/me/proj/src/auth.rs`. The
@@ -2330,5 +2374,65 @@ mod edits_tests {
         // Equal ts -> deterministic tie-break by rowid DESC (latest insert first).
         assert_eq!(hits[0].snippet, "second");
         assert_eq!(hits[1].snippet, "first");
+    }
+
+    #[test]
+    fn evidence_for_assembles_sessions_with_their_edits_newest_first() {
+        use crate::model::{EditEvent, EditKind, Session};
+        let mut c = Connection::open_in_memory().unwrap();
+        create_cache_schema(&c).unwrap();
+
+        for (sid, store, started, kind, snip) in [
+            (
+                "old",
+                "/store/old.jsonl",
+                "2026-06-01T00:00:00Z",
+                EditKind::Edit,
+                "v1",
+            ),
+            (
+                "new",
+                "/store/new.jsonl",
+                "2026-06-09T00:00:00Z",
+                EditKind::Write,
+                "v2",
+            ),
+        ] {
+            let started = chrono::DateTime::parse_from_rfc3339(started)
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+            let session = Session {
+                id: sid.into(),
+                tool: "claude-code",
+                path: store.into(),
+                project: "/proj".into(),
+                started: Some(started),
+                ended: None,
+                title: format!("{sid} title"),
+                subagent: false,
+                messages: vec![],
+                touched: vec!["/proj/src/a.rs".into()],
+                edits: vec![EditEvent {
+                    path: "/proj/src/a.rs".into(),
+                    kind,
+                    snippet: snip.into(),
+                    ts: None,
+                }],
+            };
+            let tx = c.transaction().unwrap();
+            index_one(&tx, &session, store, 0, 0).unwrap();
+            tx.commit().unwrap();
+        }
+
+        let hist = evidence_for(&c, "src/a.rs", 50).unwrap();
+        assert_eq!(hist.path, "src/a.rs");
+        assert_eq!(hist.sessions.len(), 2, "both sessions that edited the file");
+        assert_eq!(
+            hist.sessions[0].session.session_id, "new",
+            "newest session first"
+        );
+        assert_eq!(hist.sessions[0].edits.len(), 1);
+        assert_eq!(hist.sessions[0].edits[0].snippet, "v2");
+        assert_eq!(hist.sessions[1].session.session_id, "old");
     }
 }
