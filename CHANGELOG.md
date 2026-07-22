@@ -6,6 +6,18 @@ semantic versioning once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **File history - "how this file was written".** Clicking a file in the web UI
+  now shows its evidence chain: the sessions that edited it, newest first, each
+  with what it actually changed - the edit kind (edit/write/multiedit) and a
+  bounded snippet of the new code, not just a bare list of sessions that touched
+  the path. This answers *why does this file look like this*. Backed by a new
+  `edits(session_id, path, kind, ts, snippet)` cache table (extracted at parse
+  time from each tool call, rebuilt on a schema bump like the other cache
+  tables), an `evidence_for(path)` assembly, and a `GET /api/file?path=`
+  endpoint. `trace`/`blame` still give the path-level provenance.
+
 ## [0.22.0] - 2026-07-20
 
 Open any live session by its native id (codex-rollout or claude-transcript
