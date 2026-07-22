@@ -53,7 +53,7 @@ pub fn db_path() -> Result<PathBuf> {
 /// deleted - and are versioned separately by `meta.durable_version` via forward,
 /// additive-only migrations that never drop, so they survive every upgrade. The
 /// two counters are independent and must never gate each other.
-const SCHEMA_VERSION: i64 = 8; // 8: redact secrets at index time (rebuild scrubs old rows)
+pub const SCHEMA_VERSION: i64 = 8; // 8: redact secrets at index time (rebuild scrubs old rows)
 
 /// Version of the durable schema this binary ships. The durable CREATE
 /// statements are frozen at this shape; every later durable change is a

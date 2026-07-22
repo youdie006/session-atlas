@@ -8,6 +8,18 @@ semantic versioning once it reaches 1.0.
 
 ### Added
 
+- **`doctor`** - a read-only, one-command health check of this machine's setup:
+  which session stores exist (and how many sessions each holds), the index's
+  schema currency and core-table presence, how many sessions are indexed (and
+  kept after a tool deleted them), and the version. `--json` for scripts. When
+  something looks empty or stale the cause is usually mundane; this surfaces it
+  so a bug report starts from facts.
+- **Secrets are redacted from message text, titles, edit snippets, and synopses
+  at index time** (`[redacted:<kind>]`) - PEM private keys, JWTs, and prefixed
+  tokens (OpenAI, AWS, GitHub, Stripe, Google, Slack). The index outlives the
+  original session via archive mode, so credentials must not land in it. A
+  schema bump scrubs sessions already indexed before this change. Dependency-free
+  and tuned to high-confidence shapes to avoid redacting ordinary code.
 - **File history - "how this file was written".** Clicking a file in the web UI
   now shows its evidence chain: the sessions that edited it, newest first, each
   with what it actually changed - the edit kind (edit/write/multiedit) and a

@@ -10,6 +10,7 @@ pub mod account_link;
 pub mod adapters;
 pub mod blame;
 pub mod commands;
+pub mod doctor;
 pub mod hook;
 pub mod index;
 pub mod mcp;

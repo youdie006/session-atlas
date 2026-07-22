@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use sessionwiki::{commands, web};
+use sessionwiki::{commands, doctor, web};
 
 /// Find, search, and read every AI coding session on your machine - across
 /// Claude Code, Codex, Gemini CLI, OpenCode, Cline, and more. 100% local.
@@ -282,6 +282,12 @@ enum Command {
     Projects,
     /// Usage breakdown across tools, projects, and months
     Stats,
+    /// Diagnose this machine's setup: which stores exist, index health, version
+    Doctor {
+        /// Emit the checks as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Internal hooks for editor integrations (run by Claude Code, not by hand)
     Hook {
         #[command(subcommand)]
@@ -417,6 +423,7 @@ fn main() {
         } => commands::digest(&since, tool.as_deref(), project.as_deref(), json, no_sync),
         Command::Projects => commands::projects(),
         Command::Stats => commands::stats(),
+        Command::Doctor { json } => doctor::run(json),
         Command::Hook {
             cmd: HookCmd::SessionStart,
         } => {
