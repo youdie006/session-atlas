@@ -24,7 +24,7 @@
 
 </div>
 
-**sessionwiki reads the traces your AI coding tools already leave on disk and turns them into one searchable, linkable archive you can actually get back into.** No daemon, no cloud, no logging habit to build &mdash; it indexes every tool at once, then lets you tag it, link it, and pick up where you left off.
+**sessionwiki turns the sessions your AI coding tools already wrote to disk into one durable history you can read, search, and trace &mdash; every file back to the conversation that wrote it, and nothing lost when a tool prunes the original.** Every tool at once. No daemon, no cloud, no logging habit to build &mdash; it works retroactively over the history you already have.
 
 ```console
 $ sessionwiki scan
@@ -40,14 +40,14 @@ That is one real machine. Run it on yours &mdash; the number is usually a surpri
 
 ## What you can do with it
 
-- **Search** every message of every tool at once &mdash; substring + CJK, zero setup.
-- **Read & resume** any session &mdash; reopen it in its original tool, or `brief` it into another.
-- **[Trace](#trace-code-back-to-its-session)** a file back to the conversations that wrote it &mdash; the link between your sessions and your code, across every tool.
+- **[Trace](#trace-code-back-to-its-session)** a file back to the conversations that wrote it &mdash; the link between your code and your sessions, across every tool, retroactively.
 - **Blame** a line back to the session behind it &mdash; `git blame` for the AI era; best-effort, falls back to file-level `trace`.
-- **[Keep & reclaim](#nothing-gets-lost-archive-mode)** &mdash; sessions are archived when a tool deletes them, so search never goes dark; delete the bulky originals and still search them.
+- **[Keep](#nothing-gets-lost-archive-mode)** every session &mdash; archived when a tool prunes it, so `search` and `trace` never go dark; delete the bulky originals and still search them.
+- **Read & resume** any session &mdash; reopen it in its original tool, or `brief` it into another.
+- **Search** every message of every tool at once &mdash; substring + CJK, zero setup.
 - **Curate** &mdash; tag, note, jump to [related](#session-engineering) sessions, and see where your agent time goes.
 
-And a web UI when you would rather read than grep &mdash; `sessionwiki web`:
+And a web UI for reading and browsing, not just grepping &mdash; live search, rendered transcripts, and each session's files as clickable provenance chips. `sessionwiki web`:
 
 <img src="docs/demo-web.webp" width="820" alt="The sessionwiki web UI: real typing in the search, an open transcript with tags, a note and a resume command, file provenance, tag filtering, and dark mode">
 
@@ -325,12 +325,15 @@ oh-my-claudecode` works &mdash; a filesystem signal, so a session that merely
 
 ### How it compares
 
-Browsing AI session history is an active space. Each of these is good at what it
-does; sessionwiki's bet is the one thing none of them do &mdash; link the
-conversation to the code it produced.
+Searching and browsing AI session history is an active &mdash; and now crowded &mdash;
+space. Each of these is good at what it does; sessionwiki's bet is a **durable,
+browsable home** for your history: read it in a web UI (not just grep), trace any
+file back to the conversation that wrote it, and keep every session even after the
+tool prunes the original.
 
 | | Great at | What sessionwiki adds |
 |---|---|---|
+| [deja-vu](https://github.com/vshulcz/deja-vu) | Fast cross-agent recall as an MCP memory layer (SSH sync, handoff, redaction) | A web UI to read and browse, not just query; and archive mode &mdash; history survives after the tool deletes the original |
 | [Claudia](https://github.com/getAsterisk/claudia) | A polished Claude Code GUI | Cross-tool, CLI *and* web, and `trace` links code back to its conversation |
 | [SpecStory](https://specstory.com) | Capturing chat history as you work | Works retroactively over the sessions you already have &mdash; no capture step |
 | [claude-code-log](https://github.com/daaain/claude-code-log) | Rendering one tool's transcripts to HTML | Every tool at once, full-text search, and provenance |
