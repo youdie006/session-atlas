@@ -8,6 +8,15 @@ semantic versioning once it reaches 1.0.
 
 ### Added
 
+- **`migrate --config-dir`** - write a transcript into a specific account's
+  store instead of always the default one. This is what lets a conversation be
+  handed to another ACCOUNT: under swapdex's slot model each account has its own
+  `CLAUDE_CONFIG_DIR` with its own `projects/` inside, and migrate wrote into
+  `~/.claude` unconditionally, so on a slotted machine the copy succeeded and
+  landed where the resuming account never looks. Without the flag
+  `CLAUDE_CONFIG_DIR` is honoured, so running inside a slot's own shell already
+  does the right thing; failing both, the single default store.
+
 - **`doctor`** - a read-only, one-command health check of this machine's setup:
   which session stores exist (and how many sessions each holds), the index's
   schema currency and core-table presence, how many sessions are indexed (and
