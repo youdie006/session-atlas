@@ -454,7 +454,12 @@ pub fn sync_cmd(tool: Option<&str>) -> Result<()> {
 ///   gemini:      chats live under `~/.gemini/tmp/<sha256(dir)>/chats/`, so the
 ///                chat is copied there and its `projectHash` rewritten.
 /// The original is always left untouched.
-pub fn migrate_cmd(id: &str, target_dir: &str, no_sync: bool) -> Result<()> {
+pub fn migrate_cmd(
+    id: &str,
+    target_dir: &str,
+    no_sync: bool,
+    config_dir: Option<&std::path::Path>,
+) -> Result<()> {
     let mut conn = index::open()?;
     let row = resolve_lazy(&mut conn, id, no_sync)?;
 
@@ -479,10 +484,15 @@ pub fn migrate_cmd(id: &str, target_dir: &str, no_sync: bool) -> Result<()> {
                     row.path
                 );
             }
-            let dest_dir = home
-                .join(".claude")
-                .join("projects")
-                .join(crate::migrate::claude_project_folder(&target_str));
+            // The store of the account that will RESUME this, which under
+            // swapdex's slot model is not the default one.
+            let dest_dir = crate::migrate::claude_store_root(
+                config_dir,
+                std::env::var("CLAUDE_CONFIG_DIR").ok().as_deref(),
+                &home,
+            )
+            .join("projects")
+            .join(crate::migrate::claude_project_folder(&target_str));
             let dest = dest_dir.join(src.file_name().context("bad session path")?);
             if dest.exists() {
                 bail!("already migrated: {} already exists", dest.display());

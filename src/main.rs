@@ -147,6 +147,11 @@ enum Command {
         /// Skip the index sync; only sync if the id is not already indexed
         #[arg(long)]
         no_sync: bool,
+        /// Write into THIS account's store instead of the default one - the
+        /// slot directory swapdex gives an account (its CLAUDE_CONFIG_DIR).
+        /// Without it, `CLAUDE_CONFIG_DIR` is honoured, then `~/.claude`.
+        #[arg(long, value_name = "DIR")]
+        config_dir: Option<std::path::PathBuf>,
     },
     /// Generate and cache LLM synopses for sessions (uses your own LLM CLI)
     Summarize {
@@ -376,7 +381,12 @@ fn main() {
             no_sync,
         } => commands::show(&id, full, json, outline, window, budget, live, no_sync),
         Command::Resume { id, print, no_sync } => commands::resume_cmd(&id, print, no_sync),
-        Command::Migrate { id, dir, no_sync } => commands::migrate_cmd(&id, &dir, no_sync),
+        Command::Migrate {
+            id,
+            dir,
+            no_sync,
+            config_dir,
+        } => commands::migrate_cmd(&id, &dir, no_sync, config_dir.as_deref()),
         Command::Summarize {
             id,
             recent,
