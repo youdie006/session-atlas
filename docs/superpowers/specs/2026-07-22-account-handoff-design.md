@@ -1,6 +1,43 @@
 # Account handoff — continue a conversation on another account — design spec
 
-**Status:** design, awaiting review. A joint swapdex + sessionwiki feature.
+**Status:** RESOLVED 2026-08-19, but not as designed. Read the note below before
+the rest - the premise this was built on turned out to be a bug.
+
+## How it actually turned out
+
+The feasibility question below was the right one and the answer is yes: a Claude
+transcript carries no account or organisation identifier anywhere in it (seven
+keys checked on a real machine, zero hits) and its `sessionId` is just the
+filename. A conversation is not bound to the account that made it. The strongest
+evidence is that swapdex's proxy already continues one conversation across
+accounts every day, which could not work if the server bound sessions.
+
+But the design treats "transcripts are isolated per slot" as a constraint to
+work around, and it was not a constraint - it was swapdex isolating something
+that never needed isolating. Sharing `projects/` across slots (swapdex 0.67.0)
+made every conversation reachable from every account at once, which is what the
+whole tool is for: switching accounts changes who PAYS and nothing else.
+
+So of the slices below:
+
+- **1. Feasibility** - confirmed, as above.
+- **2. `swapdex continue`** - built, then removed the same day (swapdex 0.68.0).
+  With one shared store there is nothing to carry, and it failed outright on the
+  setup swapdex now creates. It was the symptom treated one conversation at a
+  time.
+- **3. Slot-model carry** - shipped as `migrate --config-dir` (sessionwiki
+  0.23.0) and kept. Writing a transcript into a NAMED store is a real capability
+  - another machine, a store that is deliberately separate - and sessionwiki
+  cannot assume swapdex's arrangement.
+- **4. `brief` fallback** and **5. auto-offer** - not built, and much less
+  needed now.
+
+The lesson worth keeping: check whether the obstacle you are designing around is
+one you built yourself.
+
+---
+
+**Original status:** design, awaiting review. A joint swapdex + sessionwiki feature.
 
 **Goal:** when an AI coding session hits its usage limit on account A, continue
 the SAME conversation on account B with one command — swapdex switches the
