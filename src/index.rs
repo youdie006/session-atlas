@@ -1758,6 +1758,25 @@ pub fn evidence_for(conn: &Connection, path: &str, limit: usize) -> Result<FileH
 /// Matches either the exact stored path or any stored path ending in the
 /// query, so a relative `src/auth.rs` finds `/home/me/proj/src/auth.rs`. The
 /// matched stored path is returned alongside each session.
+/// The file name to retry with when a full path traces to nothing.
+///
+/// Folders get renamed. A session recorded `~/Project/lunch/diag.py`; the folder
+/// is `~/Project/slack` now, so tracing by the path the file has TODAY matched
+/// nothing and reported that no session had touched it - about a file whose
+/// whole history was in the index under its old directory.
+///
+/// The name is the part that survives a move. `None` when there is nothing to
+/// fall back to: a bare name would just repeat the same miss, and a trailing
+/// slash names a directory rather than a file.
+pub fn basename_fallback(query: &str) -> Option<String> {
+    let q = query.trim();
+    if q.is_empty() || q.ends_with('/') {
+        return None;
+    }
+    let (head, name) = q.rsplit_once('/')?;
+    (!head.is_empty() && !name.is_empty()).then(|| name.to_string())
+}
+
 pub fn sessions_for_file(
     conn: &Connection,
     query: &str,
@@ -2618,5 +2637,33 @@ mod edits_tests {
         assert_eq!(hist.sessions[0].edits.len(), 1);
         assert_eq!(hist.sessions[0].edits[0].snippet, "v2");
         assert_eq!(hist.sessions[1].session.session_id, "old");
+    }
+}
+
+#[cfg(test)]
+mod moved_file_tests {
+    use super::*;
+
+    /// Folders get renamed. A session recorded `~/Project/lunch/diag.py`; the
+    /// folder is now `~/Project/slack`, so tracing the file by the path it has
+    /// TODAY found nothing and said "no session touched a file matching" - about
+    /// a file whose whole history was sitting in the index under its old name.
+    ///
+    /// The basename is the part that survives a move, so a full path that finds
+    /// nothing falls back to it, and the caller is told the match was by name so
+    /// it can say the folder has moved.
+    #[test]
+    fn a_renamed_folder_still_traces_by_file_name() {
+        assert_eq!(
+            basename_fallback("/Users/b/Project/slack/diag.py").as_deref(),
+            Some("diag.py"),
+            "a full path falls back to its file name"
+        );
+        // Already a bare name: there is nothing to fall back to, and retrying
+        // the same query would just repeat the miss.
+        assert_eq!(basename_fallback("diag.py"), None);
+        assert_eq!(basename_fallback(""), None);
+        // A trailing slash names a directory, not a file to trace.
+        assert_eq!(basename_fallback("/Users/b/Project/slack/"), None);
     }
 }

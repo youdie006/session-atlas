@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [Unreleased]
+
+### Fixed
+
+- **A renamed folder no longer hides a file's history.** `trace` matched paths by
+  suffix, so a file traced by the path it has TODAY found nothing once its folder
+  had been renamed - and said "no session touched a file matching ...", about a
+  file whose entire history was in the index under the old directory. Found on a
+  real machine where `~/Project/lunch` had become `~/Project/slack`: the sessions
+  that built it were all there and unreachable by the path the owner had. A full
+  path that matches nothing now retries with the file NAME, which is the part
+  that survives a move, and says so - otherwise the older paths listed underneath
+  read as the index pointing somewhere wrong.
+
 ## [0.23.0] - 2026-08-19
 
 ### Added

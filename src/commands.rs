@@ -1451,7 +1451,18 @@ pub fn trace(path: &str, json: bool, no_sync: bool) -> Result<()> {
     if !no_sync {
         index::sync(&mut conn, None)?;
     }
-    let hits = index::sessions_for_file(&conn, path, 20)?;
+    let mut hits = index::sessions_for_file(&conn, path, 20)?;
+    // A full path that matches nothing is usually a folder that has been
+    // renamed since: the file's history is in the index under its old
+    // directory. The NAME survives a move, so retry with it rather than
+    // reporting that nothing ever touched the file.
+    let mut by_name = false;
+    if hits.is_empty() {
+        if let Some(name) = index::basename_fallback(path) {
+            hits = index::sessions_for_file(&conn, &name, 20)?;
+            by_name = !hits.is_empty();
+        }
+    }
     if json {
         let out: Vec<serde_json::Value> = hits
             .iter()
@@ -1463,6 +1474,17 @@ pub fn trace(path: &str, json: bool, no_sync: bool) -> Result<()> {
             .collect();
         println!("{}", serde_json::to_string(&serde_json::Value::Array(out))?);
         return Ok(());
+    }
+    if by_name {
+        // Say WHY the paths below will not match what was typed - otherwise the
+        // reader assumes the index is wrong about where the file lives.
+        println!(
+            "{}",
+            dim(
+                "no session recorded that exact path - matched by file name; \
+                 the folder has moved since"
+            )
+        );
     }
     if hits.is_empty() {
         println!(
