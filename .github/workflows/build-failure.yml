@@ -1,0 +1,69 @@
+name: build failure
+
+# A red build on main should say so somewhere that survives closing the tab.
+# The release job in particular publishes to four channels, and a partial
+# failure leaves them disagreeing with each other - the homebrew formula was
+# once broken for twenty-one releases with nothing anywhere reporting it.
+#
+# One issue at a time: the first failure opens it, later failures comment on
+# the same one, and the next green run closes it. Nothing is opened for a
+# failure on a branch or a pull request, where the author is already looking.
+on:
+  workflow_run:
+    workflows: ["CI", "Release"]
+    types: [completed]
+
+permissions:
+  issues: write
+
+jobs:
+  report:
+    if: github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open, update, or close the standing failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NAME: ${{ github.event.workflow_run.name }}
+          RESULT: ${{ github.event.workflow_run.conclusion }}
+          URL: ${{ github.event.workflow_run.html_url }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # The one open issue this workflow owns, if any.
+          existing=$(gh issue list -R "$REPO" --state open --label "ci failure" \
+                       --limit 1 --json number -q '.[0].number // empty')
+
+          if [ "$RESULT" = "success" ]; then
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" -R "$REPO" --body \
+                "$NAME is green again on \`${SHA:0:7}\`. $URL"
+              gh issue close "$existing" -R "$REPO"
+              echo "closed #$existing"
+            else
+              echo "green, and nothing was open"
+            fi
+            exit 0
+          fi
+
+          # Anything that is not success and not a clean cancellation is worth
+          # reporting; a skipped or cancelled run is not a failure.
+          case "$RESULT" in
+            cancelled|skipped|neutral) echo "$RESULT - not a failure"; exit 0 ;;
+          esac
+
+          body="$NAME finished with \`$RESULT\` on main at \`${SHA:0:7}\`.
+
+          $URL
+
+          This issue closes itself when that workflow is green again."
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" -R "$REPO" --body "$body"
+            echo "commented on #$existing"
+          else
+            gh issue create -R "$REPO" --label "ci failure" \
+              --title "$NAME is failing on main" --body "$body"
+          fi
