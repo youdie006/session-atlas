@@ -30,7 +30,7 @@ walkdir = "2"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 dirs = "6"
 unicode-normalization = "0.1"
-sha2 = "0.10"
+sha2 = "0.11"
 
 [dev-dependencies]
 tempfile = "3"
