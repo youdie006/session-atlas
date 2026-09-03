@@ -1,0 +1,68 @@
+name: deps auto-merge
+
+# Dependabot runs CI with a restricted token that cannot merge, so this waits
+# for CI to report and does the merge from the base repo, where the default
+# token can. Patch and compatible-minor bumps go in on their own; anything that
+# crosses a semver-incompatible boundary is labelled and left for a human,
+# because that is where a dependency changes behaviour rather than fixes it.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'pull_request'
+      && startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge the bump unless it is breaking
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          num=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+                  --jq '[.[] | select(.state == "open")] | .[0].number // empty')
+          if [ -z "$num" ]; then
+            echo "no open pull request for $SHA - nothing to merge"
+            exit 0
+          fi
+
+          title=$(gh pr view "$num" -R "$REPO" --json title -q .title)
+          from=$(printf '%s' "$title" | sed -n 's/.* from \([0-9][0-9.]*\) to .*/\1/p')
+          to=$(printf '%s' "$title" | sed -n 's/.* from [0-9][0-9.]* to \([0-9][0-9.]*\).*/\1/p')
+          if [ -z "$from" ] || [ -z "$to" ]; then
+            echo "no version range in: $title - leaving it alone"
+            exit 0
+          fi
+
+          # Cargo treats 0.x as breaking at the MINOR position, so the
+          # compatibility key is "0.23" below 1.0 and "1" at or above it.
+          key() {
+            major=${1%%.*}
+            if [ "$major" = "0" ]; then
+              rest=${1#*.}
+              printf '0.%s' "${rest%%.*}"
+            else
+              printf '%s' "$major"
+            fi
+          }
+
+          if [ "$(key "$from")" != "$(key "$to")" ]; then
+            gh pr edit "$num" -R "$REPO" --add-label "needs review"
+            gh pr comment "$num" -R "$REPO" --body \
+              "Held for review: $from -> $to crosses a semver-incompatible boundary, which is where a dependency changes behaviour rather than fixes it. CI is green; the merge is the part that wants a person."
+            exit 0
+          fi
+
+          gh pr merge "$num" -R "$REPO" --squash --delete-branch
+          echo "merged #$num ($from -> $to)"

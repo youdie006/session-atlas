@@ -1,0 +1,77 @@
+name: triage
+
+# A first response that asks for the facts a fix actually depends on, so the
+# round trip costs minutes instead of days. It labels nothing by guessing at
+# keywords - the issue templates already set bug/enhancement, and a wrong label
+# is worse than no label.
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  ask-for-the-missing-facts:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - name: A bug report with no version cannot be acted on
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+
+          # Only bug reports. A feature or adapter request has no version to
+          # give, and asking for one there is noise.
+          case ",$LABELS," in
+            *,bug,*) ;;
+            *) echo "not a bug report - nothing to ask for"; exit 0 ;;
+          esac
+
+          # Any filled-in version has digits in it. An untouched template line
+          # ("- sessionwiki version:") does not.
+          if printf '%s' "$BODY" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "a version is present - leaving it alone"
+            exit 0
+          fi
+
+          gh issue edit "$NUMBER" -R "$REPO" --add-label "needs info"
+          gh issue comment "$NUMBER" -R "$REPO" --body 'Thanks for the report. Two things decide what happens next, and neither is here yet:
+
+          - The output of `sessionwiki --version`. The installed one, not the release you read about: brew, cargo and the install script can each leave a different binary on PATH, and only the one answering matters.
+          - Which OS, and which tool wrote the sessions involved: Claude Code, Codex, Cursor, Gemini, Copilot, aider, amp, Cline or OpenCode.
+
+          `sessionwiki doctor` is worth pasting too. It reports what sessionwiki can and cannot see on this machine, which is usually where these turn out to live. Everything it prints is local; redact any path you would rather not post.
+
+          Labelled `needs info`. Add them in a comment and it goes back into the normal queue.'
+
+  greet-an-outside-pull-request:
+    # pull_request_target so a pull request from a fork gets a token that can
+    # comment. The fork's code is never checked out here, only commented on.
+    if: >-
+      github.event_name == 'pull_request_target'
+      && github.event.pull_request.user.login != github.repository_owner
+      && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Say what happens next
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$NUMBER" -R "$REPO" --body 'Thanks for the pull request. This is a one-person project, so here is what happens next rather than silence:
+
+          CI has to be green, and changes are read against the tests. A fix that arrives with a test which fails before it and passes after is the one that moves fastest. A fix without one tends to sit here while I work out how to verify it.
+
+          If this adds an adapter for another tool, a small fixture session in the tests is what makes it reviewable without me installing that tool.
+
+          Nothing else is expected of you. If CI goes red on something unrelated to your change, say so and I will look.'

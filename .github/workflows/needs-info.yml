@@ -1,0 +1,48 @@
+name: needs-info reaper
+
+# Closes only what is waiting on a reporter who stopped answering. It never
+# touches an issue on its own merits, so the roadmap issues filed here stay
+# open however long they take - the label is the entire scope.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Nudge at 21 days, close at 28
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          nudge_before=$(date -u -d '21 days ago' +%Y-%m-%d)
+          close_before=$(date -u -d '28 days ago' +%Y-%m-%d)
+
+          # Closing first, so an issue crossing 28 days is not nudged on the
+          # same run it is closed on.
+          gh issue list -R "$REPO" --state open --label "needs info" \
+            --search "updated:<$close_before" --json number -q '.[].number' \
+          | while read -r n; do
+              [ -n "$n" ] || continue
+              gh issue comment "$n" -R "$REPO" --body \
+                "Closing this after four weeks with no version or platform to work from. Nothing about it was judged - reopen with those details and it picks up where it left off."
+              gh issue close "$n" -R "$REPO" --reason "not planned"
+              echo "closed #$n"
+            done
+
+          gh issue list -R "$REPO" --state open --label "needs info" \
+            --search "updated:<$nudge_before -label:\"needs info reminded\"" --json number -q '.[].number' \
+          | while read -r n; do
+              [ -n "$n" ] || continue
+              gh issue comment "$n" -R "$REPO" --body \
+                "Still waiting on the version and platform for this one. Without them it closes in a week - not a judgement on the report, just that there is nothing here to reproduce against."
+              gh issue edit "$n" -R "$REPO" --add-label "needs info reminded"
+              echo "nudged #$n"
+            done
