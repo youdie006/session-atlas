@@ -58,9 +58,17 @@ jobs:
           }
 
           if [ "$(key "$from")" != "$(key "$to")" ]; then
+            # Say it once. CI runs again whenever the branch is rebased, and
+            # each of those runs used to add another identical comment.
+            already=$(gh pr view "$num" -R "$REPO" --json labels \
+                        -q '[.labels[].name] | index("needs review") // empty')
             gh pr edit "$num" -R "$REPO" --add-label "needs review"
-            gh pr comment "$num" -R "$REPO" --body \
-              "Held for review: $from -> $to crosses a semver-incompatible boundary, which is where a dependency changes behaviour rather than fixes it. CI is green; the merge is the part that wants a person."
+            if [ -z "$already" ]; then
+              gh pr comment "$num" -R "$REPO" --body \
+                "Held for review: $from -> $to crosses a semver-incompatible boundary, which is where a dependency changes behaviour rather than fixes it. CI is green; the merge is the part that wants a person."
+            else
+              echo "#$num is already held - not saying it twice"
+            fi
             exit 0
           fi
 
