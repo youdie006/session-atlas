@@ -28,7 +28,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tiny_http = "0.12"
 walkdir = "2"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
-dirs = "5"
+dirs = "6"
 unicode-normalization = "0.1"
 sha2 = "0.10"
 
