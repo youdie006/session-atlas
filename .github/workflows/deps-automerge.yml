@@ -72,5 +72,32 @@ jobs:
             exit 0
           fi
 
+          # Record what is going in BEFORE it goes in. A compatible bump with
+          # green CI is merged without anyone reading the diff, so the least
+          # this can do is leave the diff readable afterwards - and say plainly
+          # when a dependency PR touched something other than the manifests,
+          # which is the case worth a second look.
+          files=$(gh pr view "$num" -R "$REPO" --json files \
+                    -q '.files[] | "  \(.path)  +\(.additions) -\(.deletions)"')
+          outside=$(gh pr view "$num" -R "$REPO" --json files \
+                    -q '[.files[] | select(.path | test("(^|/)(Cargo|package|package-lock|pnpm-lock|yarn)\\.(toml|lock|json|yaml)$") | not)] | length')
+          if [ "$outside" -eq 0 ]; then
+            verdict="Nothing outside the manifests changed."
+          else
+            verdict="$outside file(s) outside the manifests changed - worth a look."
+          fi
+          checks=$(gh pr view "$num" -R "$REPO" --json statusCheckRollup \
+                    -q '[.statusCheckRollup[]? | select((.conclusion // .state) == "SUCCESS")] | length')
+
+          gh pr comment "$num" -R "$REPO" --body "Auto-merged: $from -> $to, a compatible bump with $checks green check(s).
+
+          \`\`\`
+          $files
+          \`\`\`
+
+          $verdict
+
+          No one read this diff before it merged - that is what auto-merge means here. It is recorded so it can be read now."
+
           gh pr merge "$num" -R "$REPO" --squash --delete-branch
-          echo "merged #$num ($from -> $to)"
+          echo "merged #$num ($from -> $to), $outside file(s) outside the manifests"
