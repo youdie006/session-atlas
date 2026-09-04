@@ -113,11 +113,40 @@ pub fn index_checks(conn: &Connection, expected_schema: i64) -> Vec<Check> {
 /// Which session stores exist on this machine, and how many sessions each holds.
 /// A store that is simply absent is normal (not every tool is installed) and is
 /// left off the list; the warn fires only when NONE are found.
+/// What doctor should say about an adapter whose store location could not be
+/// worked out. `None` when the location IS known - there is nothing to add.
+///
+/// Skipping it, which is what used to happen, gave the same silence as a tool
+/// that is simply not installed. Those are different facts: one is "there is
+/// nothing to look at", the other is "this machine would not tell me where to
+/// look", and only the second is a gap in what doctor can report.
+///
+/// This is defence, not a fix for something observed: on Unix `dirs` falls
+/// back to the passwd database, so unsetting HOME does not make `root()`
+/// answer None. It can on a platform or a build where that fallback is not
+/// there, and doctor should not go quiet when it does.
+pub fn unlocatable_store(name: &str, root: Option<&std::path::Path>) -> Option<Check> {
+    root.is_none().then(|| {
+        Check::warn(
+            &format!("store: {name}"),
+            "cannot work out where its sessions would live on this machine \
+             (no home or data directory) - it was not checked"
+                .into(),
+        )
+    })
+}
+
 pub fn store_checks() -> Vec<Check> {
     let mut checks = Vec::new();
     let mut any = false;
     for adapter in crate::adapters::all() {
-        let Some(root) = adapter.root() else { continue };
+        let located = adapter.root();
+        if let Some(c) = unlocatable_store(adapter.name(), located.as_deref()) {
+            checks.push(c);
+            any = true;
+            continue;
+        }
+        let root = located.expect("checked just above");
         if !root.exists() {
             continue; // an absent store is normal - not every tool is installed
         }
@@ -258,5 +287,30 @@ mod tests {
             .find(|c| c.name == "index schema")
             .unwrap();
         assert_eq!(schema.status, Status::Ok);
+    }
+}
+
+#[cfg(test)]
+mod unlocatable_store_tests {
+    use super::*;
+
+    /// `store_checks` skipped an adapter whose `root()` answered None with the
+    /// same silence it uses for a tool that simply is not installed. Those are
+    /// different facts: one is "there is nothing to look at", the other is
+    /// "this machine would not tell me where to look" - and doctor exists to
+    /// report the second. Not reproduced: on Unix `dirs` falls back to the
+    /// passwd database, so even with HOME unset `root()` still answers. This
+    /// pins the behaviour for the platforms where it would not.
+    #[test]
+    fn an_unlocatable_store_is_reported_not_skipped() {
+        let c = unlocatable_store("gptme", None).expect("this is worth saying");
+        assert_eq!(c.status, Status::Warn);
+        assert!(c.name.contains("gptme"), "names the tool: {}", c.name);
+    }
+
+    #[test]
+    fn a_located_store_has_nothing_extra_to_say() {
+        let p = std::path::Path::new("/home/someone/.local/share/gptme/logs");
+        assert!(unlocatable_store("gptme", Some(p)).is_none());
     }
 }
