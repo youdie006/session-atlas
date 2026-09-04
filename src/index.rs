@@ -6,6 +6,24 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 
+/// Where a legacy index would sit, given where this one is going.
+///
+/// Beside the destination, not under `dirs::data_dir()`. The migration used to
+/// ask the ambient data dir wherever the index was actually headed, and then
+/// RENAME what it found into that destination - so a run with
+/// `SESSIONWIKI_DATA` pointed at a temp dir would move the real
+/// `~/.local/share/sessiondex` into it, and the tags, notes and summaries in
+/// there are not rebuildable. Eight test files set that variable.
+fn legacy_candidates(dir: &std::path::Path) -> Vec<PathBuf> {
+    let Some(parent) = dir.parent() else {
+        return Vec::new();
+    };
+    ["sessiondex", "session-atlas"]
+        .iter()
+        .map(|n| parent.join(n))
+        .collect()
+}
+
 /// The index lives outside the session stores and never touches them.
 /// Default: ~/.local/share/sessionwiki/index.db (platform equivalent).
 pub fn db_path() -> Result<PathBuf> {
@@ -17,9 +35,8 @@ pub fn db_path() -> Result<PathBuf> {
     // the existing index AND the curated tags/notes/summaries, which are not
     // rebuildable. The project was session-atlas, then sessiondex.
     if !dir.exists() {
-        if let Some(parent) = dirs::data_dir() {
-            for old_name in ["sessiondex", "session-atlas"] {
-                let old = parent.join(old_name);
+        {
+            for old in legacy_candidates(&dir) {
                 if old.exists() {
                     // A failed rename must not pass silently: the user would
                     // get a fresh empty index while their curation sits
@@ -2665,5 +2682,45 @@ mod moved_file_tests {
         assert_eq!(basename_fallback(""), None);
         // A trailing slash names a directory, not a file to trace.
         assert_eq!(basename_fallback("/Users/b/Project/slack/"), None);
+    }
+}
+
+#[cfg(test)]
+mod legacy_migration_tests {
+    use super::*;
+
+    /// The migration looked for the old directories under `dirs::data_dir()`
+    /// no matter where the index was actually going, and then RENAMED what it
+    /// found into that destination. With `SESSIONWIKI_DATA` pointed at a temp
+    /// dir - which eight test files do - a machine still holding
+    /// `~/.local/share/sessiondex` would have had its real index moved into
+    /// that temp dir and deleted with it. The comment above says the tags,
+    /// notes and summaries in there are not rebuildable.
+    #[test]
+    fn a_legacy_index_is_only_looked_for_beside_the_new_one() {
+        let under_home = std::path::Path::new("/home/someone/.local/share/sessionwiki");
+        let got = legacy_candidates(under_home);
+        assert_eq!(
+            got,
+            vec![
+                std::path::PathBuf::from("/home/someone/.local/share/sessiondex"),
+                std::path::PathBuf::from("/home/someone/.local/share/session-atlas"),
+            ],
+            "the normal case must keep working"
+        );
+
+        let redirected = std::path::Path::new("/tmp/sessionwiki-test-xyz");
+        for c in legacy_candidates(redirected) {
+            assert!(
+                c.starts_with("/tmp"),
+                "a redirected run reached outside its own tree: {}",
+                c.display()
+            );
+        }
+    }
+
+    #[test]
+    fn a_destination_with_no_parent_offers_nothing_to_migrate() {
+        assert!(legacy_candidates(std::path::Path::new("/")).is_empty());
     }
 }
