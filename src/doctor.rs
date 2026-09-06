@@ -89,17 +89,25 @@ pub fn index_checks(conn: &Connection, expected_schema: i64) -> Vec<Check> {
         r.get::<_, i64>(0)
     }) {
         Ok(main) => {
-            let archived: i64 = conn
-                .query_row(
-                    "SELECT count(*) FROM files WHERE archived_at IS NOT NULL",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0);
-            checks.push(Check::ok(
-                "indexed sessions",
-                format!("{main} ({archived} kept after the tool deleted them)"),
-            ));
+            // A count that FAILED is not a count of zero. The main count says so
+            // with a fail; this one turned any error - a schema without
+            // `archived_at`, a locked database - into "0 kept", which reads as
+            // the good news that nothing was lost.
+            let archived: rusqlite::Result<i64> = conn.query_row(
+                "SELECT count(*) FROM files WHERE archived_at IS NOT NULL",
+                [],
+                |r| r.get(0),
+            );
+            checks.push(match archived {
+                Ok(n) => Check::ok(
+                    "indexed sessions",
+                    format!("{main} ({n} kept after the tool deleted them)"),
+                ),
+                Err(e) => Check::warn(
+                    "indexed sessions",
+                    format!("{main}; could not count the ones kept after deletion ({e})"),
+                ),
+            });
         }
         Err(e) => checks.push(Check::fail(
             "indexed sessions",

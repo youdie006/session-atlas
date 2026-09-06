@@ -71,15 +71,21 @@ fn session_lines_windowed(
 /// Read a file to a string, refusing anything over [`MAX_SESSION_FILE_BYTES`]
 /// so a malicious or corrupt session file can't OOM the process.
 pub fn read_to_string_capped(path: &Path) -> Result<String> {
+    read_capped(path, MAX_SESSION_FILE_BYTES)
+}
+
+/// The same with the cap given, so the refusal itself can be tested without
+/// writing a quarter of a gigabyte to disk.
+fn read_capped(path: &Path, cap: u64) -> Result<String> {
     let len = std::fs::metadata(path)
         .with_context(|| format!("stat {}", path.display()))?
         .len();
-    if len > MAX_SESSION_FILE_BYTES {
+    if len > cap {
         bail!(
             "{} is {} - over the {} cap; skipping",
             path.display(),
             human_size(len),
-            human_size(MAX_SESSION_FILE_BYTES)
+            human_size(cap)
         );
     }
     std::fs::read_to_string(path).with_context(|| format!("open {}", path.display()))
@@ -250,5 +256,33 @@ mod tests {
             !win.iter().any(|l| l == "line05"),
             "middle dropped: {win:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    /// The cap exists so a corrupt or hostile session file cannot exhaust
+    /// memory. Eleven adapters went through it; the prodex one read its task
+    /// JSON and its artifact with a plain `fs::read`, under a comment claiming
+    /// the read was bounded.
+    #[test]
+    fn a_file_over_the_cap_is_refused_by_name_and_size() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("huge.json");
+        std::fs::write(&p, b"{}").unwrap();
+        // Cheap: assert the guard reads the SIZE, by capping at zero.
+        let err = read_capped(&p, 0).unwrap_err().to_string();
+        assert!(err.contains("over the"), "should name the cap: {err}");
+        assert!(err.contains("huge.json"), "should name the file: {err}");
+    }
+
+    #[test]
+    fn a_file_under_the_cap_reads_whole() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("small.json");
+        std::fs::write(&p, b"{\"id\":\"x\"}").unwrap();
+        assert_eq!(read_capped(&p, 1024).unwrap(), "{\"id\":\"x\"}");
     }
 }

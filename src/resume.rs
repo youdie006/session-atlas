@@ -1,8 +1,12 @@
 use std::path::{Path, PathBuf};
 
-/// How to reopen a session in its original tool. Built from the session
-/// file path, since every supported tool encodes its native session id
-/// in the filename.
+/// How to reopen a session in its original tool.
+///
+/// Built from the session file path for the two tools that can be resumed
+/// headlessly - Claude Code and Codex - because both encode their native
+/// session id in the filename. The other ten adapters have no headless resume
+/// and `for_session` answers None for them; the caller says so rather than
+/// offering a command that would not work.
 pub struct ResumeInfo {
     pub program: &'static str,
     pub args: Vec<String>,

@@ -35,10 +35,10 @@ fn bridge_roots() -> Vec<PathBuf> {
     let Some(path) = registry_path() else {
         return Vec::new();
     };
-    let Ok(bytes) = std::fs::read(&path) else {
-        return Vec::new(); // no prodex on this machine - normal
+    let Ok(text) = crate::util::read_to_string_capped(&path) else {
+        return Vec::new(); // absent, unreadable, or past the cap
     };
-    let Ok(v) = serde_json::from_slice::<Value>(&bytes) else {
+    let Ok(v) = serde_json::from_str::<Value>(&text) else {
         return Vec::new();
     };
     v["roots"]
@@ -125,10 +125,12 @@ impl Adapter for Prodex {
     }
 
     fn parse(&self, path: &Path) -> Result<Session> {
-        let task: Value = serde_json::from_slice(
-            &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
-        )
-        .with_context(|| format!("parse {}", path.display()))?;
+        // Capped like every other adapter's session read. This one went
+        // straight to `fs::read`, so the bound that exists to stop a corrupt or
+        // hostile file exhausting memory was applied by eleven adapters and
+        // skipped by this one.
+        let task: Value = serde_json::from_str(&crate::util::read_to_string_capped(path)?)
+            .with_context(|| format!("parse {}", path.display()))?;
         let task_id = task["id"].as_str().context("task has no id")?.to_string();
         // Task ids share a long `task_YYYYMMDD_...` prefix, so as SESSION ids
         // they would defeat prefix addressing (list shows 13 chars; several
@@ -190,11 +192,14 @@ impl Adapter for Prodex {
         // The answer: the full pro-consult artifact when present, else the
         // result summary. The artifact is read INDEPENDENTLY of the result -
         // a crash between the two writes must not make an answer that exists
-        // on disk unindexable. Bounded read; an artifact is normally a few KB.
+        // on disk unindexable. The comment here used to claim this read was
+        // bounded while calling plain `read_to_string`, and "normally a few KB"
+        // is not what is on disk: the largest file in a real prodex store was
+        // 35 MB. It is bounded now.
         let mut ended = None;
         if let Some(bridge) = bridge {
-            let artifact_text = std::fs::read_to_string(
-                bridge
+            let artifact_text = crate::util::read_to_string_capped(
+                &bridge
                     .join("artifacts")
                     .join("pro-consults")
                     .join(format!("{task_id}.md")),
@@ -214,9 +219,10 @@ impl Adapter for Prodex {
             })
             .filter(|t| !t.is_empty());
             let mut summary = None;
-            if let Ok(bytes) = std::fs::read(bridge.join("results").join(format!("{task_id}.json")))
-            {
-                if let Ok(result) = serde_json::from_slice::<Value>(&bytes) {
+            if let Ok(text) = crate::util::read_to_string_capped(
+                &bridge.join("results").join(format!("{task_id}.json")),
+            ) {
+                if let Ok(result) = serde_json::from_str::<Value>(&text) {
                     ended = result["created_at"].as_str().and_then(parse_ts);
                     summary = result["summary"]
                         .as_str()
@@ -274,7 +280,8 @@ pub fn thread_url_for_task(task_path: &Path) -> Option<String> {
         if p.extension().is_none_or(|x| x != "json") {
             continue;
         }
-        let Ok(v) = serde_json::from_slice::<Value>(&std::fs::read(&p).ok()?) else {
+        let Ok(v) = serde_json::from_str::<Value>(&crate::util::read_to_string_capped(&p).ok()?)
+        else {
             continue;
         };
         let Some(url) = v["thread"].as_str() else {
