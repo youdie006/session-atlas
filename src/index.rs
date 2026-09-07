@@ -697,7 +697,17 @@ pub fn sync_bounded(
             // If a backing db was present but unreadable (locked, half-written),
             // `seen` is partial - pruning off it would archive the whole corpus
             // on a transient hiccup, so skip reconciliation until a clean read.
-            if !store.had_error {
+            if store.had_error {
+                // The discover path says this out loud; this one did not. It is
+                // the path aider takes, whose walk is capped at two seconds over
+                // the whole home - so on a large home the flag can be set every
+                // run, reconciliation never happens, and nothing says why a
+                // session the tool deleted is still listed.
+                eprintln!(
+                    "[{tool}] the store could not be read in full; \
+                     skipping deletion reconciliation this run"
+                );
+            } else {
                 archived_total += archive_or_prune(conn, tool, &seen, store_present)?;
             }
 

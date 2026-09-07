@@ -128,6 +128,43 @@ fn parse_failures_are_warned_and_counted_not_swallowed() {
     );
 }
 
+/// The mirror this file's own header names, tested on the OTHER side.
+///
+/// Both paths carry the rule; only one said so. The discover path prints
+/// "skipping deletion reconciliation this run"; the shared-store path - the one
+/// aider takes - skipped in silence. Aider's walk is capped at two seconds over
+/// the whole home, so on a large home the flag can be set every run,
+/// reconciliation never happens, and nothing says why a session the tool really
+/// did delete is still listed.
+#[test]
+fn a_partial_shared_store_walk_says_it_skipped_reconciliation() {
+    if unsafe { libc_geteuid() } == 0 {
+        eprintln!("skipping: running as root");
+        return;
+    }
+    let t = tempfile::tempdir().unwrap();
+    let data = t.path().join("data");
+    let roots = t.path().join("roots");
+    fs::create_dir_all(&data).unwrap();
+    let locked = roots.join("locked");
+    fs::create_dir_all(&locked).unwrap();
+    chmod(&locked, 0o000);
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_sessionwiki"))
+        .args(["sync", "--tool", "aider"])
+        .env("SESSIONWIKI_DATA", &data)
+        .env("SESSIONWIKI_AIDER_ROOTS", &roots)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    chmod(&locked, 0o755); // so the tempdir can be removed
+
+    assert!(
+        stderr.contains("skipping deletion reconciliation"),
+        "a partial shared-store walk must say so rather than skipping in silence:\n{stderr}"
+    );
+}
+
 extern "C" {
     #[link_name = "geteuid"]
     fn libc_geteuid() -> u32;
