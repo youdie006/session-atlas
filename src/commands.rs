@@ -973,12 +973,22 @@ pub(crate) fn brief_text(
 ) -> String {
     let mut blocks: Vec<String> = Vec::new();
     for m in &session.messages {
+        // Every caller sends this somewhere: `brief` is written to be pasted
+        // into another session, `recall` prints it for the same, `summarize`
+        // pipes it to an external LLM CLI, and the MCP server hands it to a
+        // connected agent. The index these same messages are stored in has had
+        // credentials stripped since the beginning; this path had not, so the
+        // one place the text leaves the machine was the one place it was whole.
+        //
+        // Stripped BEFORE the budget below: a truncated secret is still a
+        // leaked prefix, and the marker that replaces it is short.
+        let text = crate::redact::redact(m.text.trim());
         match m.role {
-            Role::User => blocks.push(format!("**User:**\n{}", m.text.trim())),
-            Role::Assistant => blocks.push(format!("**Assistant:**\n{}", m.text.trim())),
+            Role::User => blocks.push(format!("**User:**\n{text}")),
+            Role::Assistant => blocks.push(format!("**Assistant:**\n{text}")),
             Role::Tool => {
                 if include_tools {
-                    blocks.push(format!("> [tool] {}", truncate(&m.text, 200)));
+                    blocks.push(format!("> [tool] {}", truncate(&text, 200)));
                 }
             }
         }
@@ -1805,6 +1815,49 @@ fn project_label(p: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_brief_does_not_carry_credentials_off_the_machine() {
+        use crate::model::{Message, Role, Session};
+        // Every consumer of `brief_text` sends it somewhere: `brief` is written
+        // to be pasted into another session, `recall` prints it for the same,
+        // `summarize` pipes it to an external LLM CLI, and the MCP server hands
+        // it to a connected agent. The index these same messages are stored in
+        // has had credentials stripped since the beginning; this path had not.
+        let secret = "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD";
+        let session = Session {
+            id: "s1".into(),
+            tool: "claude-code",
+            path: std::path::PathBuf::from("/tmp/s.jsonl"),
+            project: "/tmp".into(),
+            started: None,
+            ended: None,
+            title: "t".into(),
+            subagent: false,
+            messages: vec![
+                Message {
+                    role: Role::User,
+                    text: format!("here is the key {secret} use it"),
+                    ts: None,
+                },
+                Message {
+                    role: Role::Assistant,
+                    text: "ok".into(),
+                    ts: None,
+                },
+            ],
+            touched: Vec::new(),
+            edits: Vec::new(),
+        };
+        let out = brief_text(&session, 8000, false, false);
+        assert!(!out.contains(secret), "the brief still carries it:\n{out}");
+        assert!(
+            out.contains("[redacted:"),
+            "and says so rather than dropping it silently:\n{out}"
+        );
+        // Ordinary prose is untouched - the bar is high-confidence shapes only.
+        assert!(out.contains("here is the key") && out.contains("use it"));
+    }
 
     #[test]
     fn parse_duration_units() {
