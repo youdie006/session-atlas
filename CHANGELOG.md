@@ -4,6 +4,46 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.25.0] - 2026-09-07
+
+### Fixed
+
+- **The account badge names the account that actually served the session.** It
+  counted swapdex's `use` and `restore` events, which was right while every
+  switch went through them. Switching now goes through swapdex's proxy, which
+  writes `serve` - and `serve` was being dropped as "not a switch". True of the
+  event, false of the question: on a machine driven by the proxy it is the only
+  record of which account was live. Every claude-code session on this one was
+  badged with nothing while 190 serve events named three accounts, and codex
+  sessions carried a `use` from six weeks before the account last changed. The
+  newest event now wins whatever kind it is; a session that predates every event
+  still gets no badge rather than a guess. The parsing half is separated from
+  the file read so which lines survive it is testable.
+- **The prodex adapter's four reads are bounded.** The memory cap on session
+  files exists so a corrupt or hostile one cannot exhaust the process. Eleven
+  adapters went through it; prodex read its task JSON, its result JSON, its
+  registry and its artifact with a plain `fs::read` - one of them under a comment
+  saying "Bounded read; an artifact is normally a few KB", where the largest file
+  in the real store on this machine is 35 MB.
+- **`doctor` no longer reports a failed count as zero.** The count of sessions
+  kept after their tool deleted them turned any error - a schema without
+  `archived_at`, a locked database - into "0 kept", which reads as the good news
+  that nothing was lost.
+- **A redirected run leaves the real index alone.** The one-time migration from
+  the old directory names looked under `dirs::data_dir()` whatever `SESSIONWIKI_DATA`
+  said, then renamed what it found into the destination - so a redirected run
+  could move the user's real index out of their home.
+- `ResumeInfo`'s doc claimed every supported tool encodes its native session id
+  in the filename. Two of twelve do, and the code already answers None for the
+  rest; only the comment was wrong.
+
+### Added
+
+- `doctor` says when a store's location could not be worked out, instead of
+  giving that the same silence as a tool that is not installed. Defence, not a
+  reproduced failure - on Unix `dirs` falls back to the passwd database, so
+  unsetting HOME does not make it fire.
+
 ## [0.24.0] - 2026-08-20
 
 ### Fixed

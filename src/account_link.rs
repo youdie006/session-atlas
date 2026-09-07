@@ -14,6 +14,10 @@ pub struct SwitchEvent {
     pub ts: i64,
     pub tool: String,
     pub account: String,
+    /// What swapdex recorded: `use`/`restore` move where new sessions start,
+    /// `serve` hands turns to an account without moving them. Both are evidence
+    /// of which account was live at that moment, which is all this needs.
+    pub action: String,
 }
 
 /// swapdex's timeline location (same `dirs::data_dir` convention swapdex
@@ -25,8 +29,19 @@ fn timeline_path() -> Option<PathBuf> {
     Some(dirs::data_dir()?.join("swapdex").join("timeline.jsonl"))
 }
 
-/// Parse the timeline defensively: only `use`/`restore` events count (they are
-/// the moments the active account changed), malformed lines are skipped.
+/// Parse the timeline defensively: keep the events that name a live account and
+/// skip malformed lines.
+///
+/// `serve` counts. It was dropped here as "not a switch", which was true of the
+/// event and false of the question: on a machine where switching goes through
+/// swapdex's proxy, `serve` is the ONLY record of which account was live, so
+/// every claude-code session on this one was badged with nothing while 190
+/// serves named three accounts, and codex sessions carried a `use` from months
+/// before the account actually changed.
+///
+/// The actions are listed rather than "anything swapdex writes": this reads
+/// another program's file, and an action it adds later need not mean an account
+/// went live.
 pub fn load_events() -> Vec<SwitchEvent> {
     let Some(path) = timeline_path() else {
         return Vec::new();
@@ -34,6 +49,12 @@ pub fn load_events() -> Vec<SwitchEvent> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
+    parse_events(&text)
+}
+
+/// The parsing half, separated from the read so which lines survive it can be
+/// tested without a file or an environment variable.
+fn parse_events(text: &str) -> Vec<SwitchEvent> {
     let mut out = Vec::new();
     // Defense against a producer-contract change or a hand-edited file:
     // swapdex bounds the timeline to ~1000 events, but cap our read anyway
@@ -44,7 +65,10 @@ pub fn load_events() -> Vec<SwitchEvent> {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        if !matches!(v["action"].as_str(), Some("use") | Some("restore")) {
+        // A line written before swapdex recorded actions carries none, and
+        // those were all switches.
+        let action = v["action"].as_str().unwrap_or("use");
+        if !matches!(action, "use" | "restore" | "serve") {
             continue;
         }
         if let (Some(ts), Some(tool), Some(account)) =
@@ -53,6 +77,7 @@ pub fn load_events() -> Vec<SwitchEvent> {
             out.push(SwitchEvent {
                 ts,
                 tool: tool.to_string(),
+                action: action.to_string(),
                 // Strip control chars at the source: every consumer (CLI
                 // badge, web, JSON) then gets a terminal-safe name.
                 account: account.chars().filter(|c| !c.is_control()).collect(),
@@ -62,8 +87,9 @@ pub fn load_events() -> Vec<SwitchEvent> {
     out
 }
 
-/// The profile active when a session of `tool` started, or None (no events for
-/// that tool before the start - including the no-swapdex case).
+/// The profile active when a session of `tool` started: the newest event for
+/// that tool at or before it, whatever kind. None when there is none - including
+/// the no-swapdex case - so a missing badge is still never a guess.
 pub fn account_for(
     events: &[SwitchEvent],
     tool: &str,
@@ -100,7 +126,76 @@ mod tests {
             ts,
             tool: tool.into(),
             account: account.into(),
+            action: "use".into(),
         }
+    }
+
+    fn at(ts: i64) -> String {
+        chrono::DateTime::from_timestamp(ts, 0)
+            .unwrap()
+            .to_rfc3339()
+    }
+
+    fn serve(ts: i64, tool: &str, account: &str) -> SwitchEvent {
+        SwitchEvent {
+            action: "serve".into(),
+            ..ev(ts, tool, account)
+        }
+    }
+
+    #[test]
+    fn the_parser_keeps_serve_lines() {
+        // Real lines from the timeline this was found on.
+        let text = concat!(
+            r#"{"ts":1787186784,"tool":"claude-code","account":"rnd","action":"serve"}"#,
+            "\n",
+            r#"{"ts":1784504808,"tool":"codex","account":"codex","action":"use"}"#,
+            "\n",
+            r#"{"ts":1788488191,"tool":"codex","account":"work","action":"serve","by":"swapdex"}"#,
+            "\n",
+            r#"{"ts":1,"tool":"codex","account":"legacy"}"#,
+            "\n",
+            r#"not json"#,
+            "\n",
+            r#"{"ts":2,"tool":"codex","account":"nope","action":"something-new"}"#,
+        );
+        let events = parse_events(text);
+        let kept: Vec<(&str, &str)> = events
+            .iter()
+            .map(|e| (e.action.as_str(), e.account.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                ("serve", "rnd"),
+                ("use", "codex"),
+                ("serve", "work"),
+                ("use", "legacy"),
+            ],
+            "serves are kept, an action swapdex does not write today is not"
+        );
+    }
+
+    #[test]
+    fn a_serve_is_evidence_of_who_was_active() {
+        // The machine this was found on: claude-code has never been `use`d -
+        // switching goes through swapdex's proxy, which writes `serve` - and
+        // codex's last `use` is months older than its last serve.
+        let only_serves = vec![serve(200, "claude-code", "kong")];
+        assert_eq!(
+            account_for(&only_serves, "claude-code", Some(&at(300))).as_deref(),
+            Some("kong"),
+            "190 serves naming three accounts is not 'no information'"
+        );
+
+        let stale_use = vec![ev(100, "codex", "codex"), serve(200, "codex", "work")];
+        assert_eq!(
+            account_for(&stale_use, "codex", Some(&at(300))).as_deref(),
+            Some("work"),
+            "the newest evidence wins, not the oldest kind of event"
+        );
+        // Before any event for that tool, still no badge rather than a guess.
+        assert_eq!(account_for(&stale_use, "codex", Some(&at(50))), None);
     }
 
     #[test]
