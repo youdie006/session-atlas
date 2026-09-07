@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semantic versioning once it reaches 1.0.
 
+## [0.26.0] - 2026-09-07
+
+### Fixed
+
+- **A brief no longer carries credentials off the machine.** `redact` has
+  stripped them since the beginning, at INDEX time, because the index outlives
+  the original session. `brief_text` does not read the index: `load_session`
+  parses the ORIGINAL file whenever it still exists and falls back to the index
+  only when it is gone, so the same session was redacted only in the case where
+  the original had been deleted. Every consumer sends the text somewhere -
+  `brief` is written to be pasted into another session and says so, `recall`
+  prints it for the same, `summarize` pipes it to an external LLM CLI, and the
+  MCP server hands it to a connected agent. That MCP handler already neutralized
+  the title, redacted the username out of the project path, stripped control
+  characters and framed the whole thing as untrusted data; credentials were not
+  on the list. Stripped now in `brief_text`, where all four meet, and before the
+  length budget - a truncated secret is still a leaked prefix.
+- **The timeline read is bounded for real.** `load_events` said it capped the
+  read as defence against a hand-edited file, then read the whole thing into
+  memory and capped only the PARSE. It takes the last megabyte as whole lines
+  now, dropping the one the seek cut in half so no fragment can parse as a
+  different record.
+- **A partial store walk says it skipped deletion reconciliation.** Two paths
+  carry that rule - do not archive off an incomplete listing - and only one said
+  so. The silent one is the path aider takes, and aider is rootless: its walk
+  covers the whole home under a two-second budget, and the flag is set on any
+  cap-hit. On a large home reconciliation could be skipped every run with
+  nothing saying why a session the tool deleted was still listed.
+
 ## [0.25.0] - 2026-09-07
 
 ### Fixed

@@ -1,6 +1,6 @@
 [package]
 name = "sessionwiki"
-version = "0.25.0"
+version = "0.26.0"
 edition = "2021"
 description = "Find, search, and read every AI coding session you've ever had - across Claude Code, Codex, Gemini CLI, OpenCode, Cline, and more."
 license = "MIT"
