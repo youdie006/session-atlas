@@ -46,7 +46,13 @@ pub fn load_events() -> Vec<SwitchEvent> {
     let Some(path) = timeline_path() else {
         return Vec::new();
     };
-    let Ok(text) = std::fs::read_to_string(path) else {
+    // The bound was claimed and not taken: the whole file was read into memory
+    // and only the PARSE was capped at 4000 lines. swapdex trims the timeline to
+    // ~1000 events, but its size is another program's business, and a hand-edited
+    // or runaway file would be read whole on every query. 1 MB is about eight
+    // thousand of these lines, so the cap is far above what the producer writes
+    // and far below what would hurt.
+    let Ok(text) = crate::util::read_tail(&path, 1024 * 1024) else {
         return Vec::new();
     };
     parse_events(&text)
@@ -56,12 +62,7 @@ pub fn load_events() -> Vec<SwitchEvent> {
 /// tested without a file or an environment variable.
 fn parse_events(text: &str) -> Vec<SwitchEvent> {
     let mut out = Vec::new();
-    // Defense against a producer-contract change or a hand-edited file:
-    // swapdex bounds the timeline to ~1000 events, but cap our read anyway
-    // (newest entries are at the tail, which is the part attribution needs).
-    let lines: Vec<&str> = text.lines().collect();
-    let tail = lines.len().saturating_sub(4000);
-    for line in &lines[tail..] {
+    for line in text.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };

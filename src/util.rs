@@ -68,6 +68,32 @@ fn session_lines_windowed(
     Ok((lines, true))
 }
 
+/// The last `max_bytes` of a file as whole lines, newest last.
+///
+/// For a file whose tail is the part that matters and whose size is another
+/// program's business. A partial line at the seek boundary is dropped, so every
+/// line handed back is one the writer finished.
+pub fn read_tail(path: &Path, max_bytes: u64) -> Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if len <= max_bytes {
+        let mut s = String::new();
+        f.read_to_string(&mut s)?;
+        return Ok(s);
+    }
+    let n = max_bytes as usize;
+    let mut buf = vec![0u8; n];
+    f.seek(SeekFrom::End(-(n as i64)))?;
+    f.read_exact(&mut buf)?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    // Drop the line the seek cut in half.
+    Ok(match text.find('\n') {
+        Some(i) => text[i + 1..].to_string(),
+        None => String::new(),
+    })
+}
+
 /// Read a file to a string, refusing anything over [`MAX_SESSION_FILE_BYTES`]
 /// so a malicious or corrupt session file can't OOM the process.
 pub fn read_to_string_capped(path: &Path) -> Result<String> {
@@ -284,5 +310,20 @@ mod cap_tests {
         let p = d.path().join("small.json");
         std::fs::write(&p, b"{\"id\":\"x\"}").unwrap();
         assert_eq!(read_capped(&p, 1024).unwrap(), "{\"id\":\"x\"}");
+    }
+
+    #[test]
+    fn read_tail_returns_whole_lines_from_the_end() {
+        let p = std::env::temp_dir().join(format!("sw-tail-{}", std::process::id()));
+        std::fs::write(&p, "first\nsecond\nthird\n").unwrap();
+        // Under the cap: the whole file, byte for byte.
+        assert_eq!(read_tail(&p, 1000).unwrap(), "first\nsecond\nthird\n");
+        // Over it: only whole lines, and never the one the seek cut in half.
+        // 12 bytes from the end is "ond\nthird\n" plus part of "sec".
+        assert_eq!(read_tail(&p, 12).unwrap(), "third\n");
+        // A cap too small to hold even one full line yields nothing, not a
+        // fragment that would parse as a different record.
+        assert_eq!(read_tail(&p, 3).unwrap(), "");
+        let _ = std::fs::remove_file(&p);
     }
 }
