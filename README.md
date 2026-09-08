@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/youdie006/sessionwiki/main/docs/banner-dark.png">
-  <img src="docs/banner.png" alt="sessionwiki — every AI coding session you've ever had: searchable, linkable, resumable, across 12 AI coding tools. 100% local.">
+  <img src="docs/banner.png" alt="sessionwiki — every AI coding session you've ever had: searchable, linkable, resumable, across 11 AI coding tools. 100% local.">
 </picture>
 
 <a href="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml"><img src="https://github.com/youdie006/sessionwiki/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -49,7 +49,7 @@ That is one real machine. Run it on yours &mdash; the number is usually a surpri
 
 And a web UI for reading and browsing, not just grepping &mdash; live search, rendered transcripts, and each session's files as clickable provenance chips. `sessionwiki web`:
 
-<img src="docs/demo-web.webp" width="820" alt="The sessionwiki web UI: real typing in the search, an open transcript with tags, a note and a resume command, file provenance, tag filtering, and dark mode">
+<img src="docs/demo-search.webp" width="820" alt="The sessionwiki web UI: typing a partial word into the search and seeing matches from Codex and Claude Code at once">
 
 ## Install
 
@@ -157,6 +157,8 @@ A session is a unit of context, and once you have hundreds they need curating
 and managing &mdash; not just searching. These commands turn the flat archive into
 a navigable, maintained one. They read the index, so they are instant.
 
+<img src="docs/demo-tags.webp" width="820" alt="Filtering the session list down to a single tag in the web UI">
+
 | Command | What it does |
 |---|---|
 | `related <id>` | Sessions about the same thing: same project first, then sessions that edited the same files, then anything sharing a tag. The "see also" for your work. |
@@ -176,6 +178,8 @@ AI writes most of the code now, so the question is no longer "who wrote this
 line" but "which conversation produced it, and why." sessionwiki reads the file
 edits out of each session's tool calls &mdash; Claude's `Edit`/`Write`, Codex's
 `apply_patch` &mdash; and links every session to the files it changed.
+
+<img src="docs/demo-trace.webp" width="820" alt="A session's files listed as provenance chips, and the sessions that touched one of those files">
 
 ```console
 $ sessionwiki trace src/middleware/mod.rs
@@ -226,6 +230,8 @@ solved something.
 ## Pick up where you left off
 
 Finding an old session is half the point; the other half is continuing it.
+
+<img src="docs/demo-open.webp" width="820" alt="Opening a session in the web UI: its tags, its files, the command that resumes it in the original tool, and the transcript rendered underneath">
 
 ```console
 $ sessionwiki search "rate limiter"
