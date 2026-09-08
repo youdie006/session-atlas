@@ -64,9 +64,24 @@ jobs:
           7z a "$dist.zip" "$dist" >/dev/null
           certutil -hashfile "$dist.zip" SHA256 | sed -n 2p > "$dist.zip.sha256"
 
+      - name: Build the release notes
+        shell: bash
+        run: |
+          # The release was published with an EMPTY body while CHANGELOG.md
+          # carried the notes, so every version looked the same on GitHub: a
+          # version number and nothing else. Every matrix leg writes the same
+          # file, so whichever uploads first sets the same body.
+          TAG="${{ github.ref_name }}"
+          sh scripts/release-notes.sh "$TAG" > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "CHANGELOG.md has no section for $TAG" >&2
+            exit 1
+          fi
+
       - name: Upload to release
         uses: softprops/action-gh-release@v3
         with:
+          body_path: RELEASE_NOTES.md
           files: |
             sessionwiki-*.tar.gz
             sessionwiki-*.tar.gz.sha256
